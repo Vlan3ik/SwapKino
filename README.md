@@ -47,9 +47,8 @@
 
 ### Архитектура
 
-* Microservices
+* Монолит
 * REST API
-* Apache Kafka
 * API Gateway
 * Docker Compose
 
