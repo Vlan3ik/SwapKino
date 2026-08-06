@@ -20,6 +20,32 @@ export interface User {
   createdAt: number;
 }
 
+export function viewPath(view: View): string {
+  switch (view.name) {
+    case "feed": return "/";
+    case "catalog": return "/catalog";
+    case "favorites": return "/favorites";
+    case "ratings": return "/ratings";
+    case "profile": return "/profile";
+    case "license": return "/license";
+    case "privacy": return "/privacy";
+    case "terms": return "/terms";
+    case "movie": return `/movie/${view.movieId}`;
+  }
+}
+
+export function viewFromLocation(): View {
+  if (typeof window === "undefined") return { name: "feed" };
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const movieMatch = path.match(/^\/movie\/(\d+)$/);
+  if (movieMatch) return { name: "movie", movieId: Number(movieMatch[1]) };
+  const names: Record<string, View["name"]> = {
+    "/catalog": "catalog", "/favorites": "favorites", "/ratings": "ratings",
+    "/profile": "profile", "/license": "license", "/privacy": "privacy", "/terms": "terms",
+  };
+  return names[path] ? { name: names[path] as Exclude<View["name"], "movie"> } : { name: "feed" };
+}
+
 interface AppState {
   view: View;
   movies: Movie[];
@@ -39,6 +65,8 @@ interface AppState {
   setView: (view: View) => void;
   goBack: () => void;
   openMovie: (movieId: number) => void;
+  loadMovie: (movieId: number) => Promise<void>;
+  syncViewFromUrl: () => void;
   loadMovies: (query?: string) => Promise<void>;
   loadMoreMovies: (query?: string) => Promise<boolean>;
   restoreSession: () => Promise<void>;
@@ -87,9 +115,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   catalogError: null,
   hydrated: false,
 
-  setView: (view) => set((state) => ({ view, history: [...state.history, state.view].slice(-20), activeReelId: view.name === "feed" ? state.activeReelId : null })),
-  goBack: () => set((state) => state.history.length === 0 ? state : { view: state.history.at(-1)!, history: state.history.slice(0, -1) }),
-  openMovie: (movieId) => set((state) => ({ view: { name: "movie", movieId }, history: [...state.history, state.view].slice(-20) })),
+  setView: (view) => {
+    if (typeof window !== "undefined") window.history.pushState({}, "", viewPath(view));
+    set((state) => ({ view, history: [...state.history, state.view].slice(-20), activeReelId: null }));
+  },
+  goBack: () => {
+    if (typeof window !== "undefined" && window.history.length > 1) window.history.back();
+    else get().setView({ name: "feed" });
+  },
+  openMovie: (movieId) => {
+    const view = { name: "movie", movieId } as const;
+    if (typeof window !== "undefined") window.history.pushState({}, "", viewPath(view));
+    set((state) => ({ view, history: [...state.history, state.view].slice(-20), activeReelId: null }));
+  },
+  loadMovie: async (movieId) => {
+    const movie = mapApiMovie(await api.movie(movieId));
+    set((state) => ({ movies: state.movies.some((item) => item.id === movie.id) ? state.movies : [...state.movies, movie] }));
+  },
+  syncViewFromUrl: () => set({ view: viewFromLocation(), activeReelId: null }),
 
   loadMovies: async (query) => {
     set({ loadingMovies: true, catalogError: null });

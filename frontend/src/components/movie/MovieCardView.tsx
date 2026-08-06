@@ -12,21 +12,46 @@ import {
   Users,
   Clapperboard,
   PenLine,
+  Share2,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RatingControl } from "@/components/common/RatingControl";
+import { toast } from "sonner";
 
 export function MovieCardView({ movieId }: { movieId: number }) {
   const movie = useAppStore((s) => s.movies.find((item) => item.id === movieId));
-  const { goBack, toggleFavorite, isFavorite, openMovie } = useAppStore();
+  const { goBack, toggleFavorite, isFavorite, loadMovie } = useAppStore();
   const [imgError, setImgError] = useState(false);
+  const [sharing, setSharing] = useState(false);
+
+  useEffect(() => {
+    if (!movie) void loadMovie(movieId).catch(() => undefined);
+  }, [movie, movieId, loadMovie]);
+
+  const shareMovie = async () => {
+    if (!movie || typeof window === "undefined") return;
+    setSharing(true);
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: movie.title, text: `Посмотри фильм «${movie.title}» в СвайпКино`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast.success("Ссылка скопирована", { description: "Можно отправить её другу" });
+      }
+    } catch {
+      // Пользователь мог закрыть системное окно Share — это не ошибка сайта.
+    } finally {
+      setSharing(false);
+    }
+  };
 
   if (!movie) {
     return (
       <div className="text-center py-20">
-        <p className="text-muted-foreground">Фильм не найден</p>
+        <p className="text-muted-foreground">Загружаем фильм…</p>
         <button
           onClick={goBack}
           className="mt-4 text-rating hover:underline text-sm"
@@ -155,6 +180,14 @@ export function MovieCardView({ movieId }: { movieId: number }) {
                   >
                     <Heart className="h-4 w-4" fill={fav ? "currentColor" : "none"} />
                     {fav ? "В избранном" : "В избранное"}
+                  </button>
+                  <button
+                    onClick={shareMovie}
+                    disabled={sharing}
+                    className="flex items-center gap-2 px-5 py-3 rounded-full font-semibold text-sm border border-white/15 hover:bg-white/5 transition-all disabled:opacity-50"
+                  >
+                    <Share2 className="h-4 w-4" />
+                    {sharing ? "Подготавливаем…" : "Поделиться"}
                   </button>
                 </div>
               </div>
@@ -304,11 +337,12 @@ export function MovieCardView({ movieId }: { movieId: number }) {
               Смотреть
             </a>
             <button
-              onClick={() => openMovie(movie.id)}
+              onClick={shareMovie}
+              disabled={sharing}
               className="flex items-center gap-2 px-5 py-3 rounded-full border border-white/15 hover:bg-white/5 font-semibold text-sm transition-colors"
             >
-              <Heart className="h-4 w-4" />
-              {fav ? "В избранном" : "Добавить в избранное"}
+              <Share2 className="h-4 w-4" />
+              Поделиться фильмом
             </button>
           </div>
         </section>

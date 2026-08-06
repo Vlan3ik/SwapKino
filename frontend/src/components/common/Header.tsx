@@ -36,7 +36,8 @@ export function Header() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
             {/* Лого */}
-            <button
+            <a
+              href="/"
               onClick={() => setView({ name: "feed" })}
               className="flex items-center gap-2.5 group no-select"
             >
@@ -56,22 +57,26 @@ export function Header() {
                   СвайпКино
                 </span>
               </div>
-            </button>
+            </a>
 
             {/* Навигация по центру */}
             <nav className="hidden md:flex items-center gap-1">
               <NavButton
                 icon={<Flame className="h-4 w-4" />}
-                label="Лента"
+                label="Подборки"
+                href="/"
                 active={activeName === "feed"}
                 onClick={() => setView({ name: "feed" })}
               />
               <NavButton
                 icon={<LayoutGrid className="h-4 w-4" />}
                 label="Каталог"
+                href="/catalog"
                 active={activeName === "catalog"}
                 onClick={() => setView({ name: "catalog" })}
               />
+              <NavButton icon={<Heart className="h-4 w-4" />} label="Избранное" href="/favorites" active={activeName === "favorites"} onClick={() => setView({ name: "favorites" })} />
+              <NavButton icon={<Star className="h-4 w-4" />} label="Оценки" href="/ratings" active={activeName === "ratings"} onClick={() => setView({ name: "ratings" })} />
             </nav>
 
             {/* Профиль / Авторизация */}
@@ -223,16 +228,20 @@ export function Header() {
           <nav className="md:hidden flex items-center gap-1 pb-2 -mt-1">
             <NavButton
               icon={<Flame className="h-4 w-4" />}
-              label="Лента"
+              label="Подборки"
+              href="/"
               active={activeName === "feed"}
               onClick={() => setView({ name: "feed" })}
             />
             <NavButton
               icon={<LayoutGrid className="h-4 w-4" />}
               label="Каталог"
+              href="/catalog"
               active={activeName === "catalog"}
               onClick={() => setView({ name: "catalog" })}
             />
+            <NavButton icon={<Heart className="h-4 w-4" />} label="Избранное" href="/favorites" active={activeName === "favorites"} onClick={() => setView({ name: "favorites" })} />
+            <NavButton icon={<Star className="h-4 w-4" />} label="Оценки" href="/ratings" active={activeName === "ratings"} onClick={() => setView({ name: "ratings" })} />
           </nav>
         </div>
       </header>
@@ -249,16 +258,19 @@ export function Header() {
 function NavButton({
   icon,
   label,
+  href,
   active,
   onClick,
 }: {
   icon: React.ReactNode;
   label: string;
+  href: string;
   active: boolean;
   onClick: () => void;
 }) {
   return (
-    <button
+    <a
+      href={href}
       onClick={onClick}
       className={cn(
         "flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all relative",
@@ -275,7 +287,7 @@ function NavButton({
           className="absolute -bottom-1 left-3 right-3 h-0.5 bg-rating rounded-full"
         />
       )}
-    </button>
+    </a>
   );
 }
 

@@ -20,10 +20,17 @@ export default function Home() {
   const view = useAppStore((s) => s.view);
   const activeReelId = useAppStore((s) => s.activeReelId);
   const restoreSession = useAppStore((s) => s.restoreSession);
+  const syncViewFromUrl = useAppStore((s) => s.syncViewFromUrl);
 
   useEffect(() => {
     void restoreSession().catch(() => undefined);
   }, [restoreSession]);
+
+  useEffect(() => {
+    syncViewFromUrl();
+    window.addEventListener("popstate", syncViewFromUrl);
+    return () => window.removeEventListener("popstate", syncViewFromUrl);
+  }, [syncViewFromUrl]);
 
   // Скрываем футер в режиме свайпа — карточка должна занимать максимум места,
   // а футер там только отвлекает от фокуса на выборе фильма.
