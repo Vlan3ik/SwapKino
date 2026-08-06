@@ -75,8 +75,6 @@ export function Header() {
                 active={activeName === "catalog"}
                 onClick={() => setView({ name: "catalog" })}
               />
-              <NavButton icon={<Heart className="h-4 w-4" />} label="Избранное" href="/favorites" active={activeName === "favorites"} onClick={() => setView({ name: "favorites" })} />
-              <NavButton icon={<Star className="h-4 w-4" />} label="Оценки" href="/ratings" active={activeName === "ratings"} onClick={() => setView({ name: "ratings" })} />
             </nav>
 
             {/* Профиль / Авторизация */}
@@ -240,8 +238,6 @@ export function Header() {
               active={activeName === "catalog"}
               onClick={() => setView({ name: "catalog" })}
             />
-            <NavButton icon={<Heart className="h-4 w-4" />} label="Избранное" href="/favorites" active={activeName === "favorites"} onClick={() => setView({ name: "favorites" })} />
-            <NavButton icon={<Star className="h-4 w-4" />} label="Оценки" href="/ratings" active={activeName === "ratings"} onClick={() => setView({ name: "ratings" })} />
           </nav>
         </div>
       </header>
