@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,7 @@ using System.Text;
 namespace SwapKino.Api;
 [ApiController]
 [Route("api/v1")]
-public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, IConfiguration config, TmdbClient tmdb) : ControllerBase
+public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, IConfiguration config, TmdbClient tmdb, IDistributedCache cache) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddDays(30),signingCredentials:creds)); }
@@ -24,7 +25,17 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     public async Task<IActionResult> Me() { var user=await users.FindByIdAsync(UserId.ToString()); return user is null?Unauthorized():Ok(new{id=user.Id,email=user.Email,displayName=user.DisplayName,createdAt=user.CreatedAt}); }
     [HttpGet("movies")]
     [AllowAnonymous]
-    public async Task<IActionResult> Movies([FromQuery]int page=1,[FromQuery]string? q=null,CancellationToken ct=default) { var rows=await tmdb.Discover(page,q,ct); return Ok(new{page,results=rows.Select(MovieDto.From)}); }
+    public async Task<IActionResult> Movies([FromQuery]int page=1,[FromQuery]string? q=null,CancellationToken ct=default)
+    {
+        if (page < 1 || page > 500) return ValidationProblem("Страница должна быть от 1 до 500");
+        var key = $"movies:{page}:{q?.Trim().ToLowerInvariant() ?? "_"}";
+        var cached = await cache.GetStringAsync(key, ct);
+        if (cached is not null) return Content(cached, "application/json");
+        var rows = await tmdb.Discover(page, q, ct);
+        var body = JsonSerializer.Serialize(new { page, results = rows.Select(MovieDto.From) });
+        await cache.SetStringAsync(key, body, new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10) }, ct);
+        return Content(body, "application/json");
+    }
     [HttpGet("movies/{id:int}")]
     [AllowAnonymous]
     public async Task<IActionResult> Movie(int id,CancellationToken ct) { var movie=await db.Movies.FindAsync([id],ct); if(movie is null||movie.DetailsState!="ready")movie=await tmdb.Details(id,ct); return Ok(MovieDto.From(movie)); }

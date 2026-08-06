@@ -44,6 +44,7 @@ services:
       ASPNETCORE_URLS: http://+:8000
       DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
       REDIS_URL: redis-runtime:6379,abortConnect=false
+      REDIS_CACHE_URL: redis-cache:6379,abortConnect=false
       SELENIUM_URL: http://selenium-service:8081
       CORS_ORIGINS: http://localhost,http://localhost:3000
       CATALOG_WARMUP_PAGES: 5
