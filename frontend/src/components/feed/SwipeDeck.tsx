@@ -119,23 +119,15 @@ export function SwipeDeck({ reelId, onExit }: SwipeDeckProps) {
     <div className="relative">
       {/* Полноэкранный анимированный бэкдроп на весь main */}
       <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-        {/* Все бэкдропы примонтированы — плавный crossfade через opacity */}
-        {movies.map((m, idx) => (
-          <div
-            key={`bg-${m.id}`}
-            className={cn(
-              "absolute inset-0 transition-opacity duration-[1100ms] ease-in-out",
-              idx === currentIndex ? "opacity-60" : "opacity-0"
-            )}
-          >
-            <img
-              src={m.backdropUrl}
-              alt=""
-              className="absolute inset-0 w-full h-full object-cover scale-105"
-              draggable={false}
-            />
-          </div>
-        ))}
+        <div key={current.id} className="absolute inset-0 opacity-60 transition-opacity duration-700">
+          <img
+            src={current.backdropUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover scale-105"
+            loading="eager"
+            draggable={false}
+          />
+        </div>
         {/* Затемнение для читаемости контента */}
         <div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/55 to-background/90" />
         <div className="absolute inset-0 backdrop-blur-[2px]" />

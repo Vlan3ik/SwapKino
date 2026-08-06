@@ -33,11 +33,11 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     public async Task<IActionResult> Recommendations([FromQuery]int page=1, CancellationToken ct=default)
     {
         var excluded = db.UserActions.Where(x => x.UserId == UserId && (x.ActionType == "swipe_left" || x.ActionType == "not_interested" || x.ActionType == "watched")).Select(x => x.TmdbId);
-        var rows = await db.Movies.Where(x => !excluded.Contains(x.TmdbId)).OrderByDescending(x => x.Popularity).Skip((page - 1) * 20).Take(20).ToListAsync(ct);
+        var rows = await db.Movies.AsNoTracking().Where(x => !excluded.Contains(x.TmdbId)).OrderByDescending(x => x.Popularity).Skip((page - 1) * 20).Take(20).ToListAsync(ct);
         if (rows.Count == 0)
         {
             await tmdb.Discover(page, null, ct);
-            rows = await db.Movies.Where(x => !excluded.Contains(x.TmdbId)).OrderByDescending(x => x.Popularity).Skip((page - 1) * 20).Take(20).ToListAsync(ct);
+            rows = await db.Movies.AsNoTracking().Where(x => !excluded.Contains(x.TmdbId)).OrderByDescending(x => x.Popularity).Skip((page - 1) * 20).Take(20).ToListAsync(ct);
         }
         return Ok(new { page, results = rows.Select(MovieDto.From) });
     }

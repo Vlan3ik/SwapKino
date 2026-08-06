@@ -138,19 +138,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ loadingMovies: true, catalogError: null });
     try {
       const token = get().token;
-      let responses = await Promise.all(
-        Array.from({ length: INITIAL_CATALOG_PAGES }, (_, index) => token
-          ? api.recommendations(index + 1)
-          : api.movies(index + 1, query))
-      );
+      let response = token ? await api.recommendations(1) : await api.movies(1, query);
       // Новый аккаунт ещё не имеет рекомендаций в PostgreSQL — в этом случае
       // показываем публичный каталог TMDB, а не локальный фиктивный список.
-      if (token && responses.every((response) => response.results.length === 0)) {
-        responses = await Promise.all(Array.from({ length: INITIAL_CATALOG_PAGES }, (_, index) => api.movies(index + 1, query)));
+      if (token && response.results.length === 0) {
+        response = await api.movies(1, query);
       }
-      const rows = responses.flatMap((response) => response.results.map(mapApiMovie));
+      const rows = response.results.map(mapApiMovie);
       const unique = [...new Map(rows.map((movie) => [movie.id, movie])).values()];
-      set({ movies: unique, catalogPage: INITIAL_CATALOG_PAGES, catalogHasMore: responses.at(-1)?.results.length === 20 });
+      set({ movies: unique, catalogPage: 1, catalogHasMore: response.results.length === 20 });
+
+      // Первую карточку показываем сразу, а ещё две страницы спокойно
+      // догружаем после отрисовки. Это не блокирует первый экран и сохраняет
+      // разнообразие киноплёнок в фоне.
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          void (async () => {
+            for (let page = 1; page < INITIAL_CATALOG_PAGES; page++) {
+              if (!(await get().loadMoreMovies(query))) break;
+            }
+          })();
+        }, 180);
+      }
     } catch (error) {
       set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить фильмы" });
       throw error;

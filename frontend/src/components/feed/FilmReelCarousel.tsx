@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence, useMotionValue, animate, PanInfo } from "framer-motion";
+import { motion, AnimatePresence, PanInfo } from "framer-motion";
 import { ChevronLeft, ChevronRight, Play } from "lucide-react";
 import { filmReels, getReelMovies } from "@/lib/movies";
 import { useAppStore } from "@/lib/store";
@@ -77,6 +77,12 @@ export function FilmReelCarousel() {
 
   const currentReel = reels[index];
   const firstMovie = reelMovies.get(currentReel.id)?.[0];
+  const visibleReels = useMemo(() => reels.map((reel, i) => {
+    let pos = i - index;
+    if (pos > reels.length / 2) pos -= reels.length;
+    if (pos < -reels.length / 2) pos += reels.length;
+    return { reel, index: i, pos };
+  }).filter(({ pos }) => Math.abs(pos) <= 2), [index, reels]);
 
   return (
     <div className="relative w-full">
@@ -94,6 +100,7 @@ export function FilmReelCarousel() {
             <img
               src={firstMovie.backdropUrl}
               alt=""
+              loading="eager"
               className="w-full h-full object-cover scale-110 blur-md opacity-40"
             />
           )}
@@ -138,11 +145,7 @@ export function FilmReelCarousel() {
           className="relative h-[480px] sm:h-[560px] flex items-center justify-center cursor-grab active:cursor-grabbing no-select"
           style={{ perspective: "2000px" }}
         >
-          {reels.map((reel, i) => {
-            let pos = i - index;
-            // Нормализация для кратчайшего пути (зацикленность)
-            if (pos > reels.length / 2) pos -= reels.length;
-            if (pos < -reels.length / 2) pos += reels.length;
+          {visibleReels.map(({ reel, index: reelIndex, pos }) => {
             return (
               <ReelCard
                 key={reel.id}
@@ -154,7 +157,7 @@ export function FilmReelCarousel() {
                   if (pos === 0) {
                     setActiveReel(reel.id);
                   } else {
-                    goTo(i);
+                    goTo(reelIndex);
                   }
                 }}
               />
@@ -269,6 +272,7 @@ function ReelCard({
         <img
           src={bgMovie.backdropUrl}
           alt={bgMovie.title}
+          loading={isCenter ? "eager" : "lazy"}
           className="absolute inset-0 w-full h-full object-cover"
           draggable={false}
         />
