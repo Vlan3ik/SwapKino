@@ -1,0 +1,17 @@
+# Local environment and secrets
+.env
+.env.*
+frontend/.env
+
+# Build artifacts
+**/bin/
+**/obj/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.zscripts/
+
+# Local runtime files
+**/__pycache__/
+*.log
+.DS_Store

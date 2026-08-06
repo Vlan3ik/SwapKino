@@ -1,3 +1,5 @@
+name: swapkino
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -7,42 +9,96 @@ services:
       POSTGRES_PASSWORD: swapkino
     volumes: ["postgres-data:/var/lib/postgresql/data"]
     healthcheck: {test: ["CMD-SHELL", "pg_isready -U swapkino -d swapkino"], interval: 5s, timeout: 5s, retries: 10}
+    mem_limit: 768m
+    cpus: 1.0
+
   redis-runtime:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     volumes: ["redis-runtime-data:/data"]
+    mem_limit: 256m
+    cpus: 0.5
+
   redis-cache:
     image: redis:7-alpine
     command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    mem_limit: 192m
+    cpus: 0.25
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment: {MINIO_ROOT_USER: minio, MINIO_ROOT_PASSWORD: minio-secret-change-me}
     volumes: ["minio-data:/data"]
     ports: ["9000:9000", "9001:9001"]
+    mem_limit: 512m
+    cpus: 0.5
+
   api:
-    build: .
-    env_file: [.env]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    env_file: [../backend/.env]
     environment:
+      SERVICE: api
       ASPNETCORE_URLS: http://+:8000
       DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
       REDIS_URL: redis-runtime:6379,abortConnect=false
-      CACHE_REDIS_URL: redis://redis-cache:6379/0
       SELENIUM_URL: http://selenium-service:8081
-    ports: ["8000:8000"]
+      CORS_ORIGINS: http://localhost,http://localhost:3000
+    expose: ["8000"]
     depends_on: {postgres: {condition: service_healthy}, redis-runtime: {condition: service_started}}
+    mem_limit: 512m
+    cpus: 1.0
+
   worker:
-    build: .
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
     environment:
       SERVICE: worker
       DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
       REDIS_URL: redis-runtime:6379,abortConnect=false
       SELENIUM_URL: http://selenium-service:8081
-      JWT_SECRET: local-development-secret-change-before-production
-    env_file: [.env]
+      JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-before-production}
+    env_file: [../backend/.env]
     depends_on: {postgres: {condition: service_healthy}, api: {condition: service_started}, selenium-service: {condition: service_started}}
+    mem_limit: 384m
+    cpus: 0.5
+
   selenium-service:
-    build: SeleniumService
-    env_file: [SeleniumService/.env.example]
+    build:
+      context: ../backend/SeleniumService
+      dockerfile: Dockerfile
+    env_file: [../backend/SeleniumService/.env.example]
     expose: ["8081"]
-volumes: {postgres-data: {}, redis-runtime-data: {}, minio-data: {}}
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    expose: ["3000"]
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    depends_on: {api: {condition: service_started}}
+    mem_limit: 512m
+    cpus: 1.0
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["80:80"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
+    depends_on: {frontend: {condition: service_started}, api: {condition: service_started}}
+    mem_limit: 128m
+    cpus: 0.25
+
+volumes:
+  postgres-data: {}
+  redis-runtime-data: {}
+  minio-data: {}

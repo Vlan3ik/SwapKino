@@ -1,0 +1,7 @@
+node_modules
+.next
+*.log
+.env*
+db
+download
+tests
