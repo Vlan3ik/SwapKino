@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: swapkino
+      POSTGRES_USER: swapkino
+      POSTGRES_PASSWORD: swapkino
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U swapkino -d swapkino"], interval: 5s, timeout: 5s, retries: 10}
+  redis-runtime:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis-runtime-data:/data"]
+  redis-cache:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment: {MINIO_ROOT_USER: minio, MINIO_ROOT_PASSWORD: minio-secret-change-me}
+    volumes: ["minio-data:/data"]
+    ports: ["9000:9000", "9001:9001"]
+  api:
+    build: .
+    env_file: [.env]
+    environment:
+      ASPNETCORE_URLS: http://+:8000
+      DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
+      REDIS_URL: redis-runtime:6379,abortConnect=false
+      CACHE_REDIS_URL: redis://redis-cache:6379/0
+      SELENIUM_URL: http://selenium-service:8081
+    ports: ["8000:8000"]
+    depends_on: {postgres: {condition: service_healthy}, redis-runtime: {condition: service_started}}
+  worker:
+    build: .
+    environment:
+      SERVICE: worker
+      DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
+      REDIS_URL: redis-runtime:6379,abortConnect=false
+      SELENIUM_URL: http://selenium-service:8081
+      JWT_SECRET: local-development-secret-change-before-production
+    env_file: [.env]
+    depends_on: {postgres: {condition: service_healthy}, api: {condition: service_started}, selenium-service: {condition: service_started}}
+  selenium-service:
+    build: SeleniumService
+    env_file: [SeleniumService/.env.example]
+    expose: ["8081"]
+volumes: {postgres-data: {}, redis-runtime-data: {}, minio-data: {}}

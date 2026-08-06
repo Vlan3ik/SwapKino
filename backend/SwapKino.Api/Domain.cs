@@ -1,0 +1,19 @@
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+
+namespace SwapKino.Api;
+
+public sealed class User : IdentityUser<Guid> { public string? DisplayName { get; set; } public string? KinopoiskProfileUrl { get; set; } public DateTime CreatedAt { get; set; } = DateTime.UtcNow; }
+public sealed class Movie { public int TmdbId { get; set; } public string Title { get; set; } = ""; public string? OriginalTitle { get; set; } public string? Overview { get; set; } public string? ReleaseDate { get; set; } public int? RuntimeMinutes { get; set; } public double VoteAverage { get; set; } public int VoteCount { get; set; } public double Popularity { get; set; } public string? PosterPath { get; set; } public string? BackdropPath { get; set; } public string DetailsState { get; set; } = "summary"; public string Payload { get; set; } = "{}"; public DateTime UpdatedAt { get; set; } = DateTime.UtcNow; }
+public sealed class UserAction { public Guid Id { get; set; } = Guid.NewGuid(); public Guid UserId { get; set; } public int TmdbId { get; set; } public string ActionType { get; set; } = ""; public double? Value { get; set; } public string IdempotencyKey { get; set; } = ""; public DateTime CreatedAt { get; set; } = DateTime.UtcNow; }
+public sealed class ImportJob { public Guid Id { get; set; } = Guid.NewGuid(); public Guid UserId { get; set; } public string ProfileUrl { get; set; } = ""; public string Status { get; set; } = "Queued"; public int Progress { get; set; } public int ImportedCount { get; set; } public string? Error { get; set; } public string Checkpoint { get; set; } = "{}"; public DateTime CreatedAt { get; set; } = DateTime.UtcNow; public DateTime UpdatedAt { get; set; } = DateTime.UtcNow; }
+public sealed class OutboxEvent { public Guid Id { get; set; } = Guid.NewGuid(); public string Topic { get; set; } = ""; public string Payload { get; set; } = "{}"; public bool Published { get; set; } public DateTime CreatedAt { get; set; } = DateTime.UtcNow; }
+
+public sealed class SwapKinoDbContext(DbContextOptions<SwapKinoDbContext> options) : IdentityDbContext<User, IdentityRole<Guid>, Guid>(options)
+{
+    public DbSet<Movie> Movies => Set<Movie>(); public DbSet<UserAction> UserActions => Set<UserAction>(); public DbSet<ImportJob> ImportJobs => Set<ImportJob>(); public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
+    protected override void OnModelCreating(ModelBuilder b) { base.OnModelCreating(b); b.Entity<Movie>().HasKey(x => x.TmdbId); b.Entity<UserAction>().HasIndex(x => new { x.UserId, x.IdempotencyKey }).IsUnique(); b.Entity<UserAction>().HasIndex(x => new { x.UserId, x.TmdbId }); b.Entity<ImportJob>().HasIndex(x => new { x.UserId, x.CreatedAt }); b.Entity<OutboxEvent>().HasIndex(x => x.Published); }
+}
+
+public static class MovieDto { public static object From(Movie m) => new { id = m.TmdbId, tmdbId = m.TmdbId, title = m.Title, originalTitle = m.OriginalTitle, overview = m.Overview, releaseDate = m.ReleaseDate, runtime = m.RuntimeMinutes, rating = m.VoteAverage, voteCount = m.VoteCount, posterUrl = m.PosterPath is null ? null : $"https://image.tmdb.org/t/p/w500{m.PosterPath}", backdropUrl = m.BackdropPath is null ? null : $"https://image.tmdb.org/t/p/original{m.BackdropPath}", detailsState = m.DetailsState, payload = System.Text.Json.JsonSerializer.Deserialize<object>(m.Payload) }; }

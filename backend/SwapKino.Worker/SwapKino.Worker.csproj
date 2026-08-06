@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker"><PropertyGroup><TargetFramework>net8.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup><ItemGroup><ProjectReference Include="../SwapKino.Api/SwapKino.Api.csproj"/><PackageReference Include="StackExchange.Redis" Version="2.8.31"/></ItemGroup></Project>

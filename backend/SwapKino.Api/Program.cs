@@ -1,0 +1,22 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using SwapKino.Api;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+
+var builder = WebApplication.CreateBuilder(args);
+var config = builder.Configuration;
+builder.Services.AddDbContext<SwapKinoDbContext>(o => o.UseNpgsql(config.GetConnectionString("Default") ?? config["DATABASE_URL"]));
+builder.Services.AddIdentityCore<User>().AddRoles<IdentityRole<Guid>>().AddEntityFrameworkStores<SwapKinoDbContext>();
+var jwtSecret = config["JWT_SECRET"] ?? throw new InvalidOperationException("JWT_SECRET is required");
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o => o.TokenValidationParameters = new TokenValidationParameters { ValidateIssuerSigningKey=true, IssuerSigningKey=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)), ValidateIssuer=false, ValidateAudience=false, ValidateLifetime=true, NameClaimType=ClaimTypes.NameIdentifier });
+builder.Services.AddAuthorization(); builder.Services.AddSignalR().AddStackExchangeRedis(config["REDIS_URL"] ?? "redis-runtime:6379,abortConnect=false"); builder.Services.AddHttpClient("tmdb", c => c.BaseAddress = new Uri(config["TMDB_BASE_URL"] ?? "https://api.themoviedb.org/3")); builder.Services.AddScoped<TmdbClient>(); builder.Services.AddControllers(); builder.Services.AddEndpointsApiExplorer(); builder.Services.AddSwaggerGen();
+builder.Services.AddCors();
+var app = builder.Build();
+await using (var scope = app.Services.CreateAsyncScope()) { var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>(); await db.Database.MigrateAsync(); }
+app.UseSwagger(); app.UseSwaggerUI(); app.UseCors(p=>p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()); app.UseAuthentication(); app.UseAuthorization(); app.MapControllers(); app.MapHub<EventsHub>("/hubs/events"); app.MapGet("/health",()=>Results.Ok(new{status="ok",service="api"})); app.Run();
+
+public sealed class EventsHub : Microsoft.AspNetCore.SignalR.Hub { public override async Task OnConnectedAsync() { var userId=Context.User?.FindFirstValue(ClaimTypes.NameIdentifier); if(userId is not null) await Groups.AddToGroupAsync(Context.ConnectionId,$"user:{userId}"); await base.OnConnectedAsync(); } }

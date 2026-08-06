@@ -1,0 +1,7 @@
+.env
+.venv
+bin
+obj
+**/bin
+**/obj
+SeleniumService
