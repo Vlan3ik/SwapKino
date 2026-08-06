@@ -43,24 +43,56 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
     [HttpPost("actions")]
     [Authorize]
-    public async Task<IActionResult> Action(ActionRequest request,CancellationToken ct) { var old=await db.UserActions.FirstOrDefaultAsync(x=>x.UserId==UserId&&x.IdempotencyKey==request.IdempotencyKey,ct); if(old is not null)return Ok(new{id=old.Id,duplicate=true}); if(!await db.Movies.AnyAsync(x=>x.TmdbId==request.TmdbId,ct))await tmdb.Details(request.TmdbId,ct); var item=new UserAction{UserId=UserId,TmdbId=request.TmdbId,ActionType=request.ActionType,Value=request.Value,IdempotencyKey=request.IdempotencyKey}; db.UserActions.Add(item); db.OutboxEvents.Add(new OutboxEvent{Topic="recommendations.action",Payload=JsonSerializer.Serialize(new{userId=UserId,tmdbId=request.TmdbId,action=request.ActionType})}); await db.SaveChangesAsync(ct); return Created("",new{id=item.Id,duplicate=false}); }
+    public async Task<IActionResult> Action(ActionRequest request,CancellationToken ct)
+    {
+        var allowed = new[] { "favorite", "unfavorite", "rate", "unrate", "swipe_left", "not_interested", "watched" };
+        if (request.TmdbId <= 0 || !allowed.Contains(request.ActionType, StringComparer.Ordinal))
+            return ValidationProblem("Некорректный тип действия или идентификатор фильма");
+        if (request.IdempotencyKey is null || request.IdempotencyKey.Length is < 1 or > 100)
+            return ValidationProblem("IdempotencyKey должен содержать от 1 до 100 символов");
+        if (request.ActionType == "rate" && (request.Value is null || request.Value < 1 || request.Value > 10))
+            return ValidationProblem("Оценка должна быть от 1 до 10");
+
+        var old = await db.UserActions.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == UserId && x.IdempotencyKey == request.IdempotencyKey, ct);
+        if (old is not null) return Ok(new { id = old.Id, duplicate = true });
+        if (!await db.Movies.AnyAsync(x => x.TmdbId == request.TmdbId, ct))
+        {
+            try { await tmdb.Details(request.TmdbId, ct); }
+            catch (HttpRequestException) { return NotFound(new { message = "Фильм TMDB не найден" }); }
+        }
+
+        var item = new UserAction { UserId = UserId, TmdbId = request.TmdbId, ActionType = request.ActionType, Value = request.Value, IdempotencyKey = request.IdempotencyKey };
+        db.UserActions.Add(item);
+        db.OutboxEvents.Add(new OutboxEvent { Topic = "recommendations.action", Payload = JsonSerializer.Serialize(new { userId = UserId, tmdbId = request.TmdbId, action = request.ActionType }) });
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateException)
+        {
+            var duplicate = await db.UserActions.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == UserId && x.IdempotencyKey == request.IdempotencyKey, ct);
+            if (duplicate is not null) return Ok(new { id = duplicate.Id, duplicate = true });
+            throw;
+        }
+        return Created("", new { id = item.Id, duplicate = false });
+    }
     [HttpGet("library")][Authorize]
     public async Task<IActionResult> Library(CancellationToken ct)
     {
-        // PostgreSQL/EF Core не во всех версиях корректно переводит выбор
-        // последней записи из GroupBy с последующей проекцией. Забираем только
-        // действия текущего пользователя и группируем уже небольшой набор в памяти.
-        var actions = await db.UserActions
-            .Where(x => x.UserId == UserId)
-            .OrderByDescending(x => x.CreatedAt)
+        // Текущее состояние библиотеки вычисляется в PostgreSQL, а не через
+        // загрузку всей истории действий в память приложения.
+        var items = await db.UserActions.FromSqlInterpolated($@"
+            SELECT ""Id"", ""UserId"", ""TmdbId"", ""ActionType"", ""Value"", ""IdempotencyKey"", ""CreatedAt""
+            FROM (
+                SELECT a.*, ROW_NUMBER() OVER (PARTITION BY a.""TmdbId"" ORDER BY a.""CreatedAt"" DESC) AS rn
+                FROM ""UserActions"" a
+                WHERE a.""UserId"" = {UserId}
+            ) latest
+            WHERE latest.rn = 1")
+            .AsNoTracking()
+            .Select(x => new { id = x.Id, tmdbId = x.TmdbId, action = x.ActionType, value = x.Value, createdAt = x.CreatedAt })
             .ToListAsync(ct);
-        var items = actions
-            .GroupBy(x => x.TmdbId)
-            .Select(g => g.First())
-            .Select(x => new { id = x.Id, tmdbId = x.TmdbId, action = x.ActionType, value = x.Value, createdAt = x.CreatedAt });
         return Ok(new { items });
     }
     [HttpPost("imports")][Authorize] public async Task<IActionResult> StartImport(ImportRequest request,CancellationToken ct) { var job=new ImportJob{UserId=UserId,ProfileUrl=request.ProfileUrl}; db.ImportJobs.Add(job); db.OutboxEvents.Add(new OutboxEvent{Topic="kinopoisk.import",Payload=JsonSerializer.Serialize(new{jobId=job.Id,userId=UserId,profileUrl=request.ProfileUrl})}); await db.SaveChangesAsync(ct); return Accepted(new{id=job.Id,status=job.Status,progress=job.Progress}); }
-    [HttpGet("imports/{id:guid}")][Authorize] public async Task<IActionResult> Import(Guid id) { var j=await db.ImportJobs.FirstOrDefaultAsync(x=>x.Id==id&&x.UserId==UserId); return j is null?NotFound():Ok(j); }
+    [HttpGet("imports/{id:guid}")][Authorize] public async Task<IActionResult> Import(Guid id, CancellationToken ct) { var j=await db.ImportJobs.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==id&&x.UserId==UserId, ct); return j is null?NotFound():Ok(new{id=j.Id,status=j.Status,progress=j.Progress,importedCount=j.ImportedCount,error=j.Error,createdAt=j.CreatedAt,updatedAt=j.UpdatedAt}); }
+    [HttpGet("imports/{id:guid}/items")][Authorize] public async Task<IActionResult> ImportItems(Guid id, CancellationToken ct) { var owns=await db.ImportJobs.AsNoTracking().AnyAsync(x=>x.Id==id&&x.UserId==UserId,ct); if(!owns)return NotFound(); var items=await db.ImportItems.AsNoTracking().Where(x=>x.ImportJobId==id).OrderBy(x=>x.Id).Select(x=>new{id=x.Id,title=x.Title,year=x.Year,genres=x.Genres,rating=x.Rating,kind=x.Kind,kinopoiskUrl=x.KinopoiskUrl,page=x.Page,matchStatus=x.MatchStatus,tmdbId=x.TmdbId,matchError=x.MatchError}).ToListAsync(ct); return Ok(new{items}); }
 }
-public sealed record RegisterRequest(string Email,string Password,string? DisplayName); public sealed record LoginRequest(string Email,string Password); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string IdempotencyKey); public sealed record ImportRequest(string ProfileUrl);
+public sealed record RegisterRequest(string Email,string Password,string? DisplayName); public sealed record LoginRequest(string Email,string Password); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey); public sealed record ImportRequest(string ProfileUrl);
