@@ -15,6 +15,8 @@ await host.RunAsync();
 
 public sealed class OutboxWorker(IServiceScopeFactory scopes, IConnectionMultiplexer redis, IHttpClientFactory http, ILogger<OutboxWorker> log) : BackgroundService
 {
+    private readonly string workerId = $"{Environment.MachineName}-{Guid.NewGuid():N}";
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -23,31 +25,47 @@ public sealed class OutboxWorker(IServiceScopeFactory scopes, IConnectionMultipl
             {
                 using var scope = scopes.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
-                var events = await db.OutboxEvents.Where(x => !x.Published).OrderBy(x => x.CreatedAt).Take(20).ToListAsync(stoppingToken);
+                var events = await ClaimEvents(db, stoppingToken);
                 foreach (var item in events)
                 {
-                    if (item.Topic == "kinopoisk.import")
+                    try
                     {
-                        var payload = JsonSerializer.Deserialize<ImportPayload>(item.Payload);
-                        var job = payload is null ? null : await db.ImportJobs.FindAsync([payload.JobId], stoppingToken);
-                        if (job is not null && job.Status is not "Completed" and not "WaitingForUser")
+                        if (item.Topic == "kinopoisk.import")
                         {
-                            job.Status = "Running";
-                            job.Progress = Math.Max(job.Progress, 5);
-                            job.UpdatedAt = DateTime.UtcNow;
-                            await db.SaveChangesAsync(stoppingToken);
-                            await RunImport(db, job, payload!.ProfileUrl, stoppingToken);
+                            var payload = JsonSerializer.Deserialize<ImportPayload>(item.Payload);
+                            var job = payload is null ? null : await db.ImportJobs.FindAsync([payload.JobId], stoppingToken);
+                            if (job is not null && job.Status is not "Completed" and not "WaitingForUser")
+                            {
+                                job.Status = "Running";
+                                job.Progress = Math.Max(job.Progress, 5);
+                                job.UpdatedAt = DateTime.UtcNow;
+                                await db.SaveChangesAsync(stoppingToken);
+                                await RunImport(db, job, payload!.ProfileUrl, stoppingToken);
+                            }
                         }
-                    }
 
-                    await redis.GetDatabase().StreamAddAsync("swapkino:events", new[]
+                        await redis.GetDatabase().StreamAddAsync("swapkino:events", new[]
+                        {
+                            new NameValueEntry("event_id", item.Id.ToString()),
+                            new NameValueEntry("topic", item.Topic),
+                            new NameValueEntry("payload", item.Payload),
+                        });
+                        item.Published = true;
+                        item.PublishedAt = DateTime.UtcNow;
+                        item.LockedBy = null;
+                        item.LockedUntil = null;
+                        item.LastError = null;
+                        await db.SaveChangesAsync(stoppingToken);
+                    }
+                    catch (Exception ex)
                     {
-                        new NameValueEntry("event_id", item.Id.ToString()),
-                        new NameValueEntry("topic", item.Topic),
-                        new NameValueEntry("payload", item.Payload),
-                    });
-                    item.Published = true;
-                    await db.SaveChangesAsync(stoppingToken);
+                        item.LastError = ex.Message;
+                        item.NextAttemptAt = DateTime.UtcNow.AddSeconds(Math.Min(300, 2 * Math.Pow(2, item.AttemptCount)));
+                        item.LockedBy = null;
+                        item.LockedUntil = null;
+                        await db.SaveChangesAsync(stoppingToken);
+                        log.LogError(ex, "Outbox event {EventId} failed on attempt {Attempt}", item.Id, item.AttemptCount);
+                    }
                 }
             }
             catch (Exception ex)
@@ -57,6 +75,28 @@ public sealed class OutboxWorker(IServiceScopeFactory scopes, IConnectionMultipl
 
             await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
         }
+    }
+
+    private async Task<List<OutboxEvent>> ClaimEvents(SwapKinoDbContext db, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var until = now.AddMinutes(2);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($@"
+            UPDATE ""OutboxEvents""
+            SET ""LockedBy"" = {workerId}, ""LockedUntil"" = {until}, ""AttemptCount"" = ""AttemptCount"" + 1
+            WHERE ""Id"" IN (
+                SELECT ""Id"" FROM ""OutboxEvents""
+                WHERE NOT ""Published""
+                  AND (""NextAttemptAt"" IS NULL OR ""NextAttemptAt"" <= {now})
+                  AND (""LockedUntil"" IS NULL OR ""LockedUntil"" <= {now})
+                ORDER BY ""CreatedAt""
+                FOR UPDATE SKIP LOCKED
+                LIMIT 20
+            )", ct);
+        var events = await db.OutboxEvents.Where(x => !x.Published && x.LockedBy == workerId).OrderBy(x => x.CreatedAt).ToListAsync(ct);
+        await transaction.CommitAsync(ct);
+        return events;
     }
 
     private async Task RunImport(SwapKinoDbContext db, ImportJob job, string profileUrl, CancellationToken ct)
