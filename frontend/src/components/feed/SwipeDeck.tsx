@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { motion, useMotionValue, useTransform, PanInfo } from "framer-motion";
 import { Heart, X, Info, Star, Clock, ChevronLeft } from "lucide-react";
 import { useAppStore } from "@/lib/store";
-import { filmReels } from "@/lib/movies";
+import { api, getToken } from "@/lib/api";
+import { filmReels, getReelMovies } from "@/lib/movies";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Movie } from "@/types";
 
 interface SwipeDeckProps {
   reelId: string;
@@ -17,12 +17,16 @@ interface SwipeDeckProps {
 export function SwipeDeck({ reelId, onExit }: SwipeDeckProps) {
   const reel = filmReels.find((r) => r.id === reelId);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const { movies: catalog, openMovie, toggleFavorite, isFavorite } = useAppStore();
+  const { movies: catalog, openMovie, toggleFavorite, isFavorite, loadMoreMovies, loadingMoreMovies, catalogHasMore } = useAppStore();
   const movies = useMemo(() => {
     if (!reel) return [];
-    const linked = reel.movieIds.map((id) => catalog.find((movie) => movie.id === id)).filter((movie): movie is Movie => Boolean(movie));
-    return linked.length ? linked : catalog.filter((movie) => movie.genres.includes(reel.genre)).slice(0, 12);
+    return getReelMovies(reel, catalog);
   }, [catalog, reel]);
+
+  useEffect(() => {
+    if (currentIndex < Math.max(0, movies.length - 3) || loadingMoreMovies || !catalogHasMore) return;
+    void loadMoreMovies();
+  }, [currentIndex, movies.length, loadingMoreMovies, catalogHasMore, loadMoreMovies]);
 
   const handleSwipe = useCallback(
     (dir: "left" | "right") => {
@@ -36,7 +40,9 @@ export function SwipeDeck({ reelId, onExit }: SwipeDeckProps) {
           });
         }
       }
-      // left — пропуск, ничего не делаем
+      if (dir === "left" && getToken()) {
+        void api.action({ tmdbId: movie.id, actionType: "swipe_left", idempotencyKey: `swipe-left:${movie.id}:${Date.now()}` }).catch(() => undefined);
+      }
       setCurrentIndex((i) => i + 1);
     },
     [currentIndex, movies, isFavorite, toggleFavorite]
@@ -63,6 +69,10 @@ export function SwipeDeck({ reelId, onExit }: SwipeDeckProps) {
   }
 
   // Конец ленты
+  if (currentIndex >= movies.length && loadingMoreMovies) {
+    return <div className="text-center py-20 text-muted-foreground">Подгружаем следующую партию фильмов…</div>;
+  }
+
   if (currentIndex >= movies.length) {
     return (
       <motion.div

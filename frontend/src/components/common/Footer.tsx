@@ -152,9 +152,19 @@ export function Footer() {
             <TechBadge label="Next.js" />
             <TechBadge label="TypeScript" />
             <TechBadge label="Tailwind" />
-            <TechBadge label="TMDB" />
+            <a
+              href="https://www.themoviedb.org/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2 py-0.5 rounded-md bg-white/5 border border-white/5 text-[10px] font-medium text-muted-foreground/80 hover:text-foreground transition-colors"
+            >
+              TMDB
+            </a>
           </div>
         </div>
+        <p className="mt-4 text-center text-[11px] leading-relaxed text-muted-foreground/70">
+          This product uses the TMDB API but is not endorsed or certified by TMDB.
+        </p>
       </div>
     </footer>
   );

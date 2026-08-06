@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence, useMotionValue, animate, PanInfo } from "framer-motion";
 import { ChevronLeft, ChevronRight, Play } from "lucide-react";
-import { filmReels } from "@/lib/movies";
+import { filmReels, getReelMovies } from "@/lib/movies";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import type { FilmReel } from "@/types";
@@ -20,6 +20,26 @@ export function FilmReelCarousel() {
   const [index, setIndex] = useState(0);
   const { movies: catalog, setActiveReel } = useAppStore();
   const trackRef = useRef<HTMLDivElement | null>(null);
+  const reelMovies = useMemo(() => {
+    const usedMovies = new Set<number>();
+    const usedCovers = new Set<string>();
+    const result = new Map<string, typeof catalog>();
+
+    for (const reel of reels) {
+      const candidates = getReelMovies(reel, catalog);
+      const cover = candidates.find(
+        (movie) => !usedMovies.has(movie.id) && movie.backdropUrl && !usedCovers.has(movie.backdropUrl)
+      ) ?? catalog.find(
+        (movie) => !usedMovies.has(movie.id) && movie.backdropUrl && !usedCovers.has(movie.backdropUrl)
+      ) ?? candidates.find((movie) => !usedMovies.has(movie.id)) ?? candidates[0];
+      if (cover) {
+        usedMovies.add(cover.id);
+        if (cover.backdropUrl) usedCovers.add(cover.backdropUrl);
+      }
+      result.set(reel.id, cover ? [cover, ...candidates.filter((movie) => movie.id !== cover.id)] : candidates);
+    }
+    return result;
+  }, [catalog, reels]);
 
   const go = useCallback(
     (dir: number) => {
@@ -56,7 +76,7 @@ export function FilmReelCarousel() {
   );
 
   const currentReel = reels[index];
-  const firstMovie = catalog.find((movie) => currentReel.movieIds.includes(movie.id)) ?? catalog.find((movie) => movie.genres.includes(currentReel.genre)) ?? catalog[0];
+  const firstMovie = reelMovies.get(currentReel.id)?.[0];
 
   return (
     <div className="relative w-full">
@@ -127,6 +147,7 @@ export function FilmReelCarousel() {
               <ReelCard
                 key={reel.id}
                 reel={reel}
+                movies={reelMovies.get(reel.id) ?? []}
                 pos={pos}
                 isCenter={pos === 0}
                 onSelect={() => {
@@ -193,20 +214,17 @@ function CarouselArrow({
 
 function ReelCard({
   reel,
+  movies,
   pos,
   isCenter,
   onSelect,
 }: {
   reel: FilmReel;
+  movies: ReturnType<typeof getReelMovies>;
   pos: number;
   isCenter: boolean;
   onSelect: () => void;
 }) {
-  const catalog = useAppStore((state) => state.movies);
-  const movies = useMemo(() => {
-    const linked = catalog.filter((movie) => reel.movieIds.includes(movie.id));
-    return linked.length ? linked : catalog.filter((movie) => movie.genres.includes(reel.genre)).slice(0, 12);
-  }, [catalog, reel]);
   const bgMovie = movies[0];
   const absPos = Math.abs(pos);
 
@@ -237,6 +255,7 @@ function ReelCard({
         pointerEvents: absPos > 2 ? "none" : "auto",
       }}
       onClick={onSelect}
+      data-reel-id={reel.id}
       className={cn(
         "absolute w-[300px] sm:w-[380px] h-[440px] sm:h-[520px]",
         "rounded-3xl overflow-hidden cursor-pointer",

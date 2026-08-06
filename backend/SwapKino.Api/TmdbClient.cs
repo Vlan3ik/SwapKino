@@ -18,8 +18,19 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
     }
 
-    public async Task<List<Movie>> Discover(int page, string? search, CancellationToken ct)
+    public async Task<List<Movie>> Discover(int page, string? search, CancellationToken ct, bool forceRefresh = false)
     {
+        if (!forceRefresh && string.IsNullOrWhiteSpace(search))
+        {
+            var cached = await db.Movies
+                .AsNoTracking()
+                .OrderByDescending(x => x.Popularity)
+                .Skip(Math.Max(0, page - 1) * 20)
+                .Take(20)
+                .ToListAsync(ct);
+            if (cached.Count == 20) return cached;
+        }
+
         try
         {
             var json = await Get(search is null ? "/discover/movie" : "/search/movie", new() { ["language"] = "ru-RU", ["page"] = page.ToString(), ["query"] = search, ["include_adult"] = "false", ["sort_by"] = "popularity.desc" }, ct);

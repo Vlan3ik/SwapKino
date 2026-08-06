@@ -113,7 +113,7 @@ export const api = {
 
 export function mapApiMovie(movie: ApiMovie): Movie {
   const payload = movie.payload ?? {};
-  const genreNames: Record<number, string> = { 28: "Боевик", 18: "Драма", 35: "Комедия", 53: "Триллер", 80: "Криминал", 878: "Фантастика", 10749: "Романтика", 27: "Ужасы" };
+  const genreNames: Record<number, string> = { 28: "Боевик", 18: "Драма", 35: "Комедия", 53: "Триллер", 80: "Криминал", 878: "Фантастика", 10749: "Романтика", 27: "Ужасы", 12: "Приключения", 14: "Фэнтези", 16: "Мультфильмы", 9648: "Детектив", 10751: "Семейный", 36: "История", 10752: "Военный", 10402: "Музыка", 99: "Документальный" };
   const genres = Array.isArray(payload.genres)
     ? payload.genres.map((genre) => (typeof genre === "object" && genre && "name" in genre ? String(genre.name) : "")).filter(Boolean)
     : Array.isArray(payload.genre_ids) ? payload.genre_ids.map((id) => genreNames[Number(id)]).filter(Boolean) : [];

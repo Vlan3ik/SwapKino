@@ -30,6 +30,9 @@ interface AppState {
   user: User | null;
   token: string | null;
   loadingMovies: boolean;
+  loadingMoreMovies: boolean;
+  catalogPage: number;
+  catalogHasMore: boolean;
   catalogError: string | null;
   hydrated: boolean;
 
@@ -37,6 +40,7 @@ interface AppState {
   goBack: () => void;
   openMovie: (movieId: number) => void;
   loadMovies: (query?: string) => Promise<void>;
+  loadMoreMovies: (query?: string) => Promise<boolean>;
   restoreSession: () => Promise<void>;
   toggleFavorite: (movieId: number) => void;
   isFavorite: (movieId: number) => boolean;
@@ -65,6 +69,8 @@ async function syncLibrary(set: (partial: Partial<AppState>) => void) {
   });
 }
 
+const INITIAL_CATALOG_PAGES = 3;
+
 export const useAppStore = create<AppState>((set, get) => ({
   view: { name: "feed" },
   movies: [],
@@ -75,6 +81,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   user: null,
   token: getToken(),
   loadingMovies: false,
+  loadingMoreMovies: false,
+  catalogPage: 0,
+  catalogHasMore: true,
   catalogError: null,
   hydrated: false,
 
@@ -85,18 +94,49 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadMovies: async (query) => {
     set({ loadingMovies: true, catalogError: null });
     try {
-      let response = get().token ? await api.recommendations() : await api.movies(1, query);
+      const token = get().token;
+      let responses = await Promise.all(
+        Array.from({ length: INITIAL_CATALOG_PAGES }, (_, index) => token
+          ? api.recommendations(index + 1)
+          : api.movies(index + 1, query))
+      );
       // Новый аккаунт ещё не имеет рекомендаций в PostgreSQL — в этом случае
       // показываем публичный каталог TMDB, а не локальный фиктивный список.
-      if (get().token && response.results.length === 0) {
-        response = await api.movies(1, query);
+      if (token && responses.every((response) => response.results.length === 0)) {
+        responses = await Promise.all(Array.from({ length: INITIAL_CATALOG_PAGES }, (_, index) => api.movies(index + 1, query)));
       }
-      set({ movies: response.results.map(mapApiMovie) });
+      const rows = responses.flatMap((response) => response.results.map(mapApiMovie));
+      const unique = [...new Map(rows.map((movie) => [movie.id, movie])).values()];
+      set({ movies: unique, catalogPage: INITIAL_CATALOG_PAGES, catalogHasMore: responses.at(-1)?.results.length === 20 });
     } catch (error) {
       set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить фильмы" });
       throw error;
     } finally {
       set({ loadingMovies: false });
+    }
+  },
+
+  loadMoreMovies: async (query) => {
+    const state = get();
+    if (state.loadingMoreMovies || !state.catalogHasMore) return false;
+    const page = state.catalogPage + 1;
+    set({ loadingMoreMovies: true, catalogError: null });
+    try {
+      const response = state.token ? await api.recommendations(page) : await api.movies(page, query);
+      const incoming = response.results.map(mapApiMovie);
+      const known = new Set(get().movies.map((movie) => movie.id));
+      const unique = incoming.filter((movie) => !known.has(movie.id));
+      set({
+        movies: [...get().movies, ...unique],
+        catalogPage: page,
+        catalogHasMore: incoming.length > 0,
+      });
+      return unique.length > 0;
+    } catch (error) {
+      set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить следующую партию" });
+      return false;
+    } finally {
+      set({ loadingMoreMovies: false });
     }
   },
 
