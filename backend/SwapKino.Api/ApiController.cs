@@ -104,11 +104,19 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
     [HttpPost("imports")][Authorize] public async Task<IActionResult> StartImport(ImportRequest request,CancellationToken ct)
     {
-        if (!Uri.TryCreate(request.ProfileUrl, UriKind.Absolute, out var profile) || profile.Scheme != Uri.UriSchemeHttps || !profile.Host.EndsWith("kinopoisk.ru", StringComparison.OrdinalIgnoreCase))
+        if (!Uri.TryCreate(request.ProfileUrl, UriKind.Absolute, out var profile) || profile.Scheme != Uri.UriSchemeHttps || !(profile.Host.Equals("kinopoisk.ru", StringComparison.OrdinalIgnoreCase) || profile.Host.EndsWith(".kinopoisk.ru", StringComparison.OrdinalIgnoreCase)))
             return ValidationProblem("Нужна HTTPS-ссылка на профиль kinopoisk.ru");
         var active = await db.ImportJobs.AsNoTracking().Where(x => x.UserId == UserId && x.ProfileUrl == request.ProfileUrl && (x.Status == "Queued" || x.Status == "Running" || x.Status == "WaitingForUser")).OrderByDescending(x => x.CreatedAt).FirstOrDefaultAsync(ct);
         if (active is not null) return Conflict(new { id = active.Id, status = active.Status, message = "Импорт этого профиля уже выполняется" });
-        var job=new ImportJob{UserId=UserId,ProfileUrl=request.ProfileUrl}; db.ImportJobs.Add(job); db.OutboxEvents.Add(new OutboxEvent{Topic="kinopoisk.import",Payload=JsonSerializer.Serialize(new{jobId=job.Id,userId=UserId,profileUrl=request.ProfileUrl})}); await db.SaveChangesAsync(ct); return Accepted(new{id=job.Id,status=job.Status,progress=job.Progress});
+        var job=new ImportJob{UserId=UserId,ProfileUrl=request.ProfileUrl}; db.ImportJobs.Add(job); db.OutboxEvents.Add(new OutboxEvent{Topic="kinopoisk.import",Payload=JsonSerializer.Serialize(new{jobId=job.Id,userId=UserId,profileUrl=request.ProfileUrl})});
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateException)
+        {
+            var alreadyActive = await db.ImportJobs.AsNoTracking().AnyAsync(x => x.UserId == UserId && x.ProfileUrl == request.ProfileUrl && (x.Status == "Queued" || x.Status == "Running" || x.Status == "WaitingForUser"), ct);
+            if (alreadyActive) return Conflict(new { message = "Импорт этого профиля уже выполняется" });
+            throw;
+        }
+        return Accepted(new{id=job.Id,status=job.Status,progress=job.Progress});
     }
     [HttpGet("imports/{id:guid}")][Authorize] public async Task<IActionResult> Import(Guid id, CancellationToken ct) { var j=await db.ImportJobs.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==id&&x.UserId==UserId, ct); return j is null?NotFound():Ok(new{id=j.Id,status=j.Status,progress=j.Progress,importedCount=j.ImportedCount,error=j.Error,createdAt=j.CreatedAt,updatedAt=j.UpdatedAt}); }
     [HttpPost("imports/{id:guid}/resume")][Authorize] public async Task<IActionResult> ResumeImport(Guid id, CancellationToken ct)
