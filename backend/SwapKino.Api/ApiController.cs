@@ -43,14 +43,27 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     [Authorize]
     public async Task<IActionResult> Recommendations([FromQuery]int page=1, CancellationToken ct=default)
     {
+        if (page < 1 || page > 500) return ValidationProblem("Страница должна быть от 1 до 500");
         var excluded = db.UserActions.Where(x => x.UserId == UserId && (x.ActionType == "swipe_left" || x.ActionType == "not_interested" || x.ActionType == "watched")).Select(x => x.TmdbId);
-        var rows = await db.Movies.AsNoTracking().Where(x => !excluded.Contains(x.TmdbId)).OrderByDescending(x => x.Popularity).Skip((page - 1) * 20).Take(20).ToListAsync(ct);
-        if (rows.Count == 0)
+        var likedIds = await db.UserActions.AsNoTracking().Where(x => x.UserId == UserId && (x.ActionType == "favorite" || (x.ActionType == "rate" && x.Value >= 7))).Select(x => x.TmdbId).Distinct().ToListAsync(ct);
+        var likedPayloads = await db.Movies.AsNoTracking().Where(x => likedIds.Contains(x.TmdbId)).Select(x => x.Payload).ToListAsync(ct);
+        var preferredGenres = likedPayloads.SelectMany(GenresFromPayload).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = await db.Movies.AsNoTracking().Where(x => !excluded.Contains(x.TmdbId)).ToListAsync(ct);
+        var ranked = candidates
+            .Select(movie => new { movie, score = movie.Popularity * 0.65 + movie.VoteAverage * 3 + GenresFromPayload(movie.Payload).Count(preferredGenres.Contains) * 12 })
+            .OrderByDescending(x => x.score)
+            .ThenByDescending(x => x.movie.VoteCount)
+            .Skip((page - 1) * 20)
+            .Take(20)
+            .Select(x => x.movie)
+            .ToList();
+        if (ranked.Count == 0)
         {
             await tmdb.Discover(page, null, ct);
-            rows = await db.Movies.AsNoTracking().Where(x => !excluded.Contains(x.TmdbId)).OrderByDescending(x => x.Popularity).Skip((page - 1) * 20).Take(20).ToListAsync(ct);
+            candidates = await db.Movies.AsNoTracking().Where(x => !excluded.Contains(x.TmdbId)).ToListAsync(ct);
+            ranked = candidates.Select(movie => new { movie, score = movie.Popularity * 0.65 + movie.VoteAverage * 3 + GenresFromPayload(movie.Payload).Count(preferredGenres.Contains) * 12 }).OrderByDescending(x => x.score).ThenByDescending(x => x.movie.VoteCount).Skip((page - 1) * 20).Take(20).Select(x => x.movie).ToList();
         }
-        return Ok(new { page, results = rows.Select(MovieDto.From) });
+        return Ok(new { page, results = ranked.Select(MovieDto.From) });
     }
     [HttpPost("actions")]
     [Authorize]
@@ -159,6 +172,19 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         }
         catch (JsonException) { }
         return null;
+    }
+    private static IEnumerable<string> GenresFromPayload(string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("genre_ids", out var ids) && ids.ValueKind == JsonValueKind.Array)
+                return ids.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Number).Select(x => x.GetInt32().ToString()).ToArray();
+            if (doc.RootElement.TryGetProperty("genres", out var genres) && genres.ValueKind == JsonValueKind.Array)
+                return genres.EnumerateArray().Where(x => x.TryGetProperty("id", out _)).Select(x => x.GetProperty("id").GetInt32().ToString()).ToArray();
+        }
+        catch (JsonException) { }
+        return Array.Empty<string>();
     }
 }
 public sealed record RegisterRequest(string Email,string Password,string? DisplayName); public sealed record LoginRequest(string Email,string Password); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey); public sealed record ImportRequest(string ProfileUrl);
