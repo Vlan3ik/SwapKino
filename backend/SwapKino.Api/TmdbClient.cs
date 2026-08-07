@@ -9,13 +9,26 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
     public async Task<JsonDocument> Get(string path, Dictionary<string, string?> query, CancellationToken ct)
     {
         var relativePath = path.TrimStart('/');
-        using var request = new HttpRequestMessage(HttpMethod.Get, relativePath + "?" + string.Join("&", query.Where(x => x.Value is not null).Select(x => $"{x.Key}={Uri.EscapeDataString(x.Value!)}")));
         var token = config["TMDB_ACCESS_TOKEN"];
-        if (!string.IsNullOrWhiteSpace(token)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        else request.RequestUri = new Uri(request.RequestUri + $"&api_key={config["TMDB_API_KEY"]}", UriKind.Relative);
-        var response = await factory.CreateClient("tmdb").SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        var client = factory.CreateClient("tmdb");
+        for (var attempt = 0; ; attempt++)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, relativePath + "?" + string.Join("&", query.Where(x => x.Value is not null).Select(x => $"{x.Key}={Uri.EscapeDataString(x.Value!)}")));
+            if (!string.IsNullOrWhiteSpace(token)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            else request.RequestUri = new Uri(request.RequestUri + $"&api_key={config["TMDB_API_KEY"]}", UriKind.Relative);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (response.IsSuccessStatusCode)
+                return JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+
+            var retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
+            if (!retryable || attempt >= 3)
+            {
+                response.EnsureSuccessStatusCode();
+            }
+
+            var delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1));
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds, 8000)), ct);
+        }
     }
 
     public async Task<List<Movie>> Discover(int page, string? search, CancellationToken ct, bool forceRefresh = false)

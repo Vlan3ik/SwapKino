@@ -8,10 +8,11 @@ public sealed class EventsStreamRelay(IConnectionMultiplexer redis, IHubContext<
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var stream = redis.GetDatabase();
         // Слушатель получает только новые события. Исторические записи stream не
         // должны повторно отправляться пользователю после перезапуска API.
-        var lastId = "$";
-        var stream = redis.GetDatabase();
+        var latest = await stream.StreamRangeAsync("swapkino:events", "-", "+", 1, Order.Descending);
+        var lastId = latest.Length == 0 ? "0-0" : latest[0].Id.ToString();
         while (!stoppingToken.IsCancellationRequested)
         {
             try

@@ -22,7 +22,11 @@ public sealed class CatalogWarmupService(
             var intervalHours = Math.Clamp(config.GetValue("CATALOG_SYNC_INTERVAL_HOURS", 6), 1, 168);
             using var timer = new PeriodicTimer(TimeSpan.FromHours(intervalHours));
             while (await timer.WaitForNextTickAsync(stoppingToken))
-                await SyncPopular(target, forceRefresh: true, ct: stoppingToken);
+            {
+                try { await SyncPopular(target, forceRefresh: true, ct: stoppingToken); }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
+                catch (Exception ex) { log.LogWarning(ex, "Catalog refresh failed; will retry on the next interval"); }
+            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
         catch (Exception ex)
