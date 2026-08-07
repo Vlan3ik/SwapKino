@@ -6,12 +6,19 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Threading.RateLimiting;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
 builder.Services.AddDbContext<SwapKinoDbContext>(o => o.UseNpgsql(config.GetConnectionString("Default") ?? config["DATABASE_URL"]));
-builder.Services.AddIdentityCore<User>().AddRoles<IdentityRole<Guid>>().AddEntityFrameworkStores<SwapKinoDbContext>();
+builder.Services.AddIdentityCore<User>(options =>
+{
+    options.Lockout.AllowedForNewUsers = true;
+    options.Lockout.MaxFailedAccessAttempts = 5;
+    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+    options.Password.RequiredLength = 8;
+}).AddRoles<IdentityRole<Guid>>().AddSignInManager<SignInManager<User>>().AddEntityFrameworkStores<SwapKinoDbContext>();
 var jwtSecret = config["JWT_SECRET"] ?? throw new InvalidOperationException("JWT_SECRET is required");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
 {
@@ -28,6 +35,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     };
 });
 builder.Services.AddAuthorization();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true,
+        }));
+});
 var redisUrl = config["REDIS_URL"] ?? "redis-runtime:6379,abortConnect=false";
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisUrl));
 builder.Services.AddSignalR().AddStackExchangeRedis(redisUrl);
@@ -36,7 +56,7 @@ var corsOrigins = config["CORS_ORIGINS"]?.Split(',', StringSplitOptions.RemoveEm
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
 var app = builder.Build();
 await using (var scope = app.Services.CreateAsyncScope()) { var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>(); await db.Database.MigrateAsync(); }
-app.UseSwagger(); app.UseSwaggerUI(); app.UseCors(); app.UseAuthentication(); app.UseAuthorization(); app.MapControllers(); app.MapHub<EventsHub>("/hubs/events");
+app.UseSwagger(); app.UseSwaggerUI(); app.UseCors(); app.UseRateLimiter(); app.UseAuthentication(); app.UseAuthorization(); app.MapControllers(); app.MapHub<EventsHub>("/hubs/events");
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "api" }));
 app.MapGet("/ready", async (SwapKinoDbContext db, IConnectionMultiplexer redis, CancellationToken ct) =>
 {

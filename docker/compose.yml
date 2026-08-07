@@ -75,7 +75,10 @@ services:
       context: ../backend/SeleniumService
       dockerfile: Dockerfile
     env_file: [../backend/SeleniumService/.env.example]
-    expose: ["8081"]
+    environment:
+      SELENIUM_HEADLESS: "false"
+      NOVNC_TOKEN_FILE: /tmp/swapkino-novnc.tokens
+    expose: ["8081", "6080"]
     mem_limit: 1g
     cpus: 1.0
     pids_limit: 256

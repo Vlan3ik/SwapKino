@@ -137,24 +137,6 @@ export function Header() {
                           setProfileOpen(false);
                         }}
                       />
-                      <DropdownItem
-                        icon={<Heart className="h-4 w-4" />}
-                        label="Избранное"
-                        badge={favorites.length || undefined}
-                        onClick={() => {
-                          setView({ name: "favorites" });
-                          setProfileOpen(false);
-                        }}
-                      />
-                      <DropdownItem
-                        icon={<Star className="h-4 w-4" />}
-                        label="Мои оценки"
-                        badge={ratedCount || undefined}
-                        onClick={() => {
-                          setView({ name: "ratings" });
-                          setProfileOpen(false);
-                        }}
-                      />
                       <div className="h-px bg-white/5 my-1" />
                       <DropdownItem
                         icon={<LogOut className="h-4 w-4" />}

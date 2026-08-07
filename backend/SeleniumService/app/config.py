@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     selenium_max_pages: int = Field(default=100, alias="SELENIUM_MAX_PAGES")
     selenium_max_items: int = Field(default=10_000, alias="SELENIUM_MAX_ITEMS")
     selenium_max_concurrent: int = Field(default=1, alias="SELENIUM_MAX_CONCURRENT")
+    novnc_token_file: str = Field(default="/tmp/swapkino-novnc.tokens", alias="NOVNC_TOKEN_FILE")
     chrome_binary: str = Field(default="", alias="CHROME_BINARY")
     chromedriver_path: str = Field(default="", alias="CHROMEDRIVER_PATH")
     allowed_origins: str = Field(default="", alias="ALLOWED_ORIGINS")

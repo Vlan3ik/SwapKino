@@ -19,6 +19,8 @@ test "$movie_count" -gt 0
 
 selenium_health=$("${COMPOSE[@]}" exec -T selenium-service python -c 'from urllib.request import urlopen; print(urlopen("http://127.0.0.1:8081/health").read().decode())')
 [[ "$selenium_health" == *'"status":"ok"'* ]]
+curl -fsSI http://127.0.0.1/novnc/vnc.html >/dev/null
+"${COMPOSE[@]}" exec -T selenium-service sh -c 'kill -0 "$(pgrep -f "websockify.*6080" | head -n1)"'
 
 groups=$("${COMPOSE[@]}" exec -T redis-runtime redis-cli XINFO GROUPS swapkino:events)
 [[ "$groups" == *'swapkino-imports'* ]]
@@ -26,4 +28,4 @@ groups=$("${COMPOSE[@]}" exec -T redis-runtime redis-cli XINFO GROUPS swapkino:e
 errors=$("${COMPOSE[@]}" logs --since=2m api worker selenium-service --no-color | rg 'fail:|ERROR|Traceback|Unhandled|Fatal' || true)
 test -z "$errors"
 
-printf 'Docker smoke passed: readiness, catalog (%s movies), Selenium, consumer group, logs.\n' "$movie_count"
+printf 'Docker smoke passed: readiness, catalog (%s movies), Selenium/noVNC, consumer group, logs.\n' "$movie_count"

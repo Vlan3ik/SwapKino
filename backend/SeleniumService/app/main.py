@@ -14,7 +14,7 @@ from .schemas import RatedItem, RatingsRequest, RatingsResponse
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level.upper())
-captcha_sessions = CaptchaSessionStore(ttl_seconds=300)
+captcha_sessions = CaptchaSessionStore(ttl_seconds=300, token_file=settings.novnc_token_file)
 selenium_gate = threading.BoundedSemaphore(value=max(1, settings.selenium_max_concurrent))
 
 
@@ -55,7 +55,7 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "selenium"}
 
 
-def captcha_detail(exc: CaptchaRequiredError, session_id: str | None = None) -> dict:
+def captcha_detail(exc: CaptchaRequiredError, session_id: str | None = None, novnc_url: str | None = None) -> dict:
     return {
         "code": "CAPTCHA_REQUIRED",
         "message": str(exc),
@@ -66,6 +66,7 @@ def captcha_detail(exc: CaptchaRequiredError, session_id: str | None = None) -> 
         "expires_in_seconds": 300,
         "action": "manual_interaction_required",
         "resume_endpoint": f"/api/v1/kinopoisk/captcha/{session_id}/resume" if session_id else None,
+        "novnc_url": novnc_url,
         "security_note": "Не передавайте cookies, HTML или CAPTCHA-токены через API.",
     }
 
@@ -93,7 +94,7 @@ def import_ratings(payload: RatingsRequest) -> RatingsResponse:
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=captcha_detail(exc, session.session_id),
+            detail=captcha_detail(exc, session.session_id, session.novnc_url),
         ) from exc
     except ScraperError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
@@ -129,7 +130,7 @@ def resume_after_captcha(session_id: str) -> RatingsResponse:
         # и вызвать resume ещё раз до истечения TTL.
         session.collected_items = exc.collected_items
         session.page_number = exc.page_number
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=captcha_detail(exc, session_id)) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=captcha_detail(exc, session_id, session.novnc_url)) from exc
     except ScraperError as exc:
         captcha_sessions.remove(session_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

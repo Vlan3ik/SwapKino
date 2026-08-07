@@ -39,6 +39,27 @@ export interface AuthResponse {
   user: ApiUser;
 }
 
+export interface ImportCaptcha {
+  code: string;
+  message?: string | null;
+  pageUrl?: string | null;
+  screenshotBase64?: string | null;
+  screenshotMimeType?: string | null;
+  expiresInSeconds?: number | null;
+  action?: string | null;
+  resumeEndpoint?: string | null;
+  novncUrl?: string | null;
+}
+
+export interface ImportStatus {
+  id?: string;
+  status: string;
+  progress: number;
+  importedCount?: number;
+  error?: string | null;
+  captcha?: ImportCaptcha | null;
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem(TOKEN_KEY);
@@ -108,7 +129,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ profileUrl }),
     }),
-  importStatus: (id: string) => request<{ status: string; progress: number; error?: string }>(`/imports/${id}`),
+  importStatus: (id: string) => request<ImportStatus>(`/imports/${id}`),
+  importResume: (id: string) => request<ImportStatus>(`/imports/${id}/resume`, { method: "POST" }),
+  importCancel: (id: string) => request<ImportStatus>(`/imports/${id}/cancel`, { method: "POST" }),
 };
 
 export function mapApiMovie(movie: ApiMovie): Movie {

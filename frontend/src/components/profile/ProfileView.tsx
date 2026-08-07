@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   User,
   Link2,
@@ -27,6 +27,32 @@ export function ProfileView() {
   const [kpLink, setKpLink] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
+  const [importId, setImportId] = useState<string | null>(null);
+  const [importState, setImportState] = useState<{ status: string; progress: number; importedCount?: number; error?: string | null; captcha?: { novncUrl?: string | null; screenshotBase64?: string | null; screenshotMimeType?: string | null; message?: string | null } | null } | null>(null);
+
+  useEffect(() => {
+    if (!importId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const next = await api.importStatus(importId);
+        if (!cancelled) {
+          setImportState(next);
+          if (next.status === "Completed") {
+            setSyncing(false);
+            setSynced(true);
+          } else if (["WaitingForUser", "Failed", "Cancelled"].includes(next.status)) {
+            setSyncing(false);
+          }
+        }
+      } catch {
+        if (!cancelled) setSyncing(false);
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [importId]);
 
   const favMovies = movies.filter((m) => favorites.includes(m.id));
   const ratedEntries = Object.entries(ratings)
@@ -47,9 +73,10 @@ export function ProfileView() {
     if (!kpLink.trim()) return;
     setSyncing(true);
     try {
-      await api.importProfile(kpLink.trim());
-      setSyncing(false);
-      setSynced(true);
+      const started = await api.importProfile(kpLink.trim());
+      setImportId(started.id);
+      setImportState({ status: started.status, progress: started.progress });
+      setSynced(false);
     } catch {
       setSyncing(false);
     }
@@ -228,6 +255,44 @@ export function ProfileView() {
               <CheckCircle2 className="h-3.5 w-3.5" />
               Оценки успешно импортированы. Рекомендации адаптированы.
             </motion.div>
+          )}
+
+          {importState && !synced && (
+            <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">
+                    {importState.status === "WaitingForUser" ? "Нужно пройти проверку Кинопоиска" : `Импорт: ${importState.status}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {importState.status === "WaitingForUser" ? "Открой интерактивное окно, заверши CAPTCHA и нажми продолжить." : `Прогресс: ${importState.progress}%${importState.importedCount ? ` · импортировано ${importState.importedCount}` : ""}`}
+                  </p>
+                </div>
+                {importState.status === "WaitingForUser" && importState.captcha?.novncUrl && (
+                  <button
+                    type="button"
+                    onClick={() => window.open(importState.captcha?.novncUrl ?? "", "_blank", "noopener,noreferrer")}
+                    className="shrink-0 rounded-lg bg-rating px-3 py-2 text-xs font-bold text-black hover:bg-rating/80"
+                  >
+                    Открыть CAPTCHA
+                  </button>
+                )}
+              </div>
+              {importState.status === "WaitingForUser" && importState.captcha?.screenshotBase64 && (
+                <img
+                  src={`data:${importState.captcha.screenshotMimeType ?? "image/png"};base64,${importState.captcha.screenshotBase64}`}
+                  alt="Состояние проверки Кинопоиска"
+                  className="max-h-48 w-full rounded-lg border border-white/10 object-contain"
+                />
+              )}
+              {importState.status === "WaitingForUser" && importId && (
+                <div className="flex gap-2">
+                  <button type="button" onClick={async () => { setSyncing(true); try { const next = await api.importResume(importId); setImportState(next); } catch { setSyncing(false); } }} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black hover:bg-rating">Продолжить импорт</button>
+                  <button type="button" onClick={async () => { try { const next = await api.importCancel(importId); setImportState(next); setSyncing(false); } catch { /* следующая проверка покажет актуальное состояние */ } }} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground">Отменить</button>
+                </div>
+              )}
+              {importState.error && <p className="text-xs text-red-300">{importState.error}</p>}
+            </div>
           )}
         </motion.div>
       )}

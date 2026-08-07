@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -12,15 +13,23 @@ using System.Text;
 namespace SwapKino.Api;
 [ApiController]
 [Route("api/v1")]
-public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, IConfiguration config, TmdbClient tmdb, IDistributedCache cache, IHttpClientFactory http) : ControllerBase
+public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, TmdbClient tmdb, IDistributedCache cache, IHttpClientFactory http) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddDays(30),signingCredentials:creds)); }
-    [HttpPost("auth/register")]
+    [HttpPost("auth/register")][EnableRateLimiting("auth")]
     [ProducesResponseType(StatusCodes.Status201Created)]
     public async Task<IActionResult> Register(RegisterRequest request) { if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(result.Errors); return Created("",new{accessToken=Token(u),user=new{id=u.Id,email=u.Email,displayName=u.DisplayName}}); }
-    [HttpPost("auth/login")]
-    public async Task<IActionResult> Login(LoginRequest request) { var u=await users.FindByEmailAsync(request.Email) ?? await users.FindByNameAsync(request.Email); if(u is null||!await users.CheckPasswordAsync(u,request.Password))return Unauthorized(new{message="Invalid email or password"}); return Ok(new{accessToken=Token(u),user=new{id=u.Id,email=u.Email,displayName=u.DisplayName}}); }
+    [HttpPost("auth/login")][EnableRateLimiting("auth")]
+    public async Task<IActionResult> Login(LoginRequest request)
+    {
+        var u = await users.FindByEmailAsync(request.Email) ?? await users.FindByNameAsync(request.Email);
+        if (u is null) return Unauthorized(new { message = "Invalid email or password" });
+        var result = await signIn.CheckPasswordSignInAsync(u, request.Password, lockoutOnFailure: true);
+        if (result.IsLockedOut) return StatusCode(StatusCodes.Status423Locked, new { message = "Слишком много неудачных попыток. Попробуйте через 15 минут." });
+        if (!result.Succeeded) return Unauthorized(new { message = "Invalid email or password" });
+        return Ok(new { accessToken = Token(u), user = new { id = u.Id, email = u.Email, displayName = u.DisplayName } });
+    }
     [HttpGet("auth/me")][Authorize]
     public async Task<IActionResult> Me() { var user=await users.FindByIdAsync(UserId.ToString()); return user is null?Unauthorized():Ok(new{id=user.Id,email=user.Email,displayName=user.DisplayName,createdAt=user.CreatedAt}); }
     [HttpGet("movies")]
@@ -131,7 +140,22 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         }
         return Accepted(new{id=job.Id,status=job.Status,progress=job.Progress});
     }
-    [HttpGet("imports/{id:guid}")][Authorize] public async Task<IActionResult> Import(Guid id, CancellationToken ct) { var j=await db.ImportJobs.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==id&&x.UserId==UserId, ct); return j is null?NotFound():Ok(new{id=j.Id,status=j.Status,progress=j.Progress,importedCount=j.ImportedCount,error=j.Error,createdAt=j.CreatedAt,updatedAt=j.UpdatedAt}); }
+    [HttpGet("imports/{id:guid}")][Authorize] public async Task<IActionResult> Import(Guid id, CancellationToken ct)
+    {
+        var j = await db.ImportJobs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.UserId == UserId, ct);
+        if (j is null) return NotFound();
+        return Ok(new
+        {
+            id = j.Id,
+            status = j.Status,
+            progress = j.Progress,
+            importedCount = j.ImportedCount,
+            error = j.Error,
+            captcha = j.Status == "WaitingForUser" ? TryCaptchaDetail(j.Checkpoint) : null,
+            createdAt = j.CreatedAt,
+            updatedAt = j.UpdatedAt,
+        });
+    }
     [HttpPost("imports/{id:guid}/resume")][Authorize] public async Task<IActionResult> ResumeImport(Guid id, CancellationToken ct)
     {
         var job = await db.ImportJobs.FirstOrDefaultAsync(x => x.Id == id && x.UserId == UserId, ct);
@@ -172,6 +196,31 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         }
         catch (JsonException) { }
         return null;
+    }
+    private static object? TryCaptchaDetail(string checkpoint)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(checkpoint);
+            var root = doc.RootElement;
+            var detail = root.TryGetProperty("detail", out var nested) ? nested : root;
+            if (!detail.TryGetProperty("code", out var code) || code.GetString() != "CAPTCHA_REQUIRED") return null;
+            string? StringProperty(string name) => detail.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null ? value.GetString() : null;
+            int? IntProperty(string name) => detail.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var result) ? result : null;
+            return new
+            {
+                code = code.GetString(),
+                message = StringProperty("message"),
+                pageUrl = StringProperty("page_url"),
+                screenshotBase64 = StringProperty("screenshot_base64"),
+                screenshotMimeType = StringProperty("screenshot_mime_type"),
+                expiresInSeconds = IntProperty("expires_in_seconds"),
+                action = StringProperty("action"),
+                resumeEndpoint = StringProperty("resume_endpoint"),
+                novncUrl = StringProperty("novnc_url"),
+            };
+        }
+        catch (JsonException) { return null; }
     }
     private static IEnumerable<string> GenresFromPayload(string payload)
     {
