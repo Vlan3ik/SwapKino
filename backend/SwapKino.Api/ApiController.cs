@@ -34,7 +34,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
     [HttpPost("auth/register")][EnableRateLimiting("auth")]
     [ProducesResponseType(StatusCodes.Status201Created)]
-    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct) { if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(result.Errors); return await AuthResponse(u, ct, StatusCodes.Status201Created); }
+    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct) { if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(new { message = string.Join(" ", result.Errors.Select(error => error.Description)), errors = result.Errors }); return await AuthResponse(u, ct, StatusCodes.Status201Created); }
     [HttpPost("auth/login")][EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct)
     {
@@ -76,11 +76,17 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     public async Task<IActionResult> Movies([FromQuery]int page=1,[FromQuery]string? q=null,CancellationToken ct=default)
     {
         if (page < 1 || page > 500) return ValidationProblem("Страница должна быть от 1 до 500");
-        var key = $"movies:{page}:{q?.Trim().ToLowerInvariant() ?? "_"}";
+        var key = $"movies:v3:{page}:{q?.Trim().ToLowerInvariant() ?? "_"}";
         var cached = await cache.GetStringAsync(key, ct);
         if (cached is not null) return Content(cached, "application/json");
-        var rows = await tmdb.Discover(page, q, ct);
-        var body = JsonSerializer.Serialize(new { page, results = rows.Select(MovieDto.From) });
+        var tmdbPage = await tmdb.DiscoverPage(page, q, ct);
+        var rows = tmdbPage.Results;
+        var normalizedQuery = q?.Trim();
+        var totalCount = string.IsNullOrWhiteSpace(normalizedQuery) ? await db.Movies.AsNoTracking()
+            .Where(x => string.IsNullOrWhiteSpace(normalizedQuery) || x.Title.ToLower().Contains(normalizedQuery!.ToLower()) || (x.OriginalTitle != null && x.OriginalTitle.ToLower().Contains(normalizedQuery!.ToLower())))
+            .CountAsync(ct) : tmdbPage.TotalResults;
+        var totalPages = string.IsNullOrWhiteSpace(normalizedQuery) ? Math.Max(1, (int)Math.Ceiling(totalCount / 20d)) : tmdbPage.TotalPages;
+        var body = JsonSerializer.Serialize(new { page, pageSize = 20, totalCount, totalPages, hasNextPage = page < totalPages, results = rows.Select(MovieDto.From) });
         await cache.SetStringAsync(key, body, new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10) }, ct);
         return Content(body, "application/json");
     }

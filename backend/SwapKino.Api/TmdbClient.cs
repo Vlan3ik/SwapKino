@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace SwapKino.Api;
 
+public sealed record TmdbPage(IReadOnlyList<Movie> Results, int TotalPages, int TotalResults);
+
 public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config, SwapKinoDbContext db)
 {
     public async Task<JsonDocument> Get(string path, Dictionary<string, string?> query, CancellationToken ct)
@@ -31,7 +33,7 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
         }
     }
 
-    public async Task<List<Movie>> Discover(int page, string? search, CancellationToken ct, bool forceRefresh = false, string endpoint = "/discover/movie")
+    public async Task<TmdbPage> DiscoverPage(int page, string? search, CancellationToken ct, bool forceRefresh = false, string endpoint = "/discover/movie")
     {
         if (!forceRefresh && string.IsNullOrWhiteSpace(search) && endpoint == "/discover/movie")
         {
@@ -41,7 +43,11 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
                 .Skip(Math.Max(0, page - 1) * 20)
                 .Take(20)
                 .ToListAsync(ct);
-            if (cached.Count == 20) return cached;
+            if (cached.Count == 20)
+            {
+                var total = await db.Movies.CountAsync(ct);
+                return new TmdbPage(cached, Math.Max(1, (int)Math.Ceiling(total / 20d)), total);
+            }
         }
 
         try
@@ -66,19 +72,32 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
                 result.Add(movie);
             }
             await db.SaveChangesAsync(ct);
-            return result;
+            var totalPages = json.RootElement.TryGetProperty("total_pages", out var pages) ? pages.GetInt32() : Math.Max(1, (int)Math.Ceiling(result.Count / 20d));
+            var totalResults = json.RootElement.TryGetProperty("total_results", out var results) ? results.GetInt32() : result.Count;
+            return new TmdbPage(result, totalPages, totalResults);
         }
         catch (HttpRequestException)
         {
-            if (config.GetValue("TMDB_ALLOW_FALLBACK", false)) return await Fallback(search, page, ct);
-            return await db.Movies.AsNoTracking()
+            if (config.GetValue("TMDB_ALLOW_FALLBACK", false))
+            {
+                var fallback = await Fallback(search, page, ct);
+                return new TmdbPage(fallback, Math.Max(1, (int)Math.Ceiling(fallback.Count / 20d)), fallback.Count);
+            }
+            var local = await db.Movies.AsNoTracking()
                 .Where(x => string.IsNullOrWhiteSpace(search) || x.Title.Contains(search) || (x.OriginalTitle != null && x.OriginalTitle.Contains(search)))
                 .OrderByDescending(x => x.Popularity)
                 .Skip(Math.Max(0, page - 1) * 20)
                 .Take(20)
                 .ToListAsync(ct);
+            var localTotal = await db.Movies.AsNoTracking()
+                .Where(x => string.IsNullOrWhiteSpace(search) || x.Title.Contains(search) || (x.OriginalTitle != null && x.OriginalTitle.Contains(search)))
+                .CountAsync(ct);
+            return new TmdbPage(local, Math.Max(1, (int)Math.Ceiling(localTotal / 20d)), localTotal);
         }
     }
+
+    public async Task<List<Movie>> Discover(int page, string? search, CancellationToken ct, bool forceRefresh = false, string endpoint = "/discover/movie")
+        => (await DiscoverPage(page, search, ct, forceRefresh, endpoint)).Results.ToList();
 
     public async Task<Movie> Details(int id, CancellationToken ct)
     {

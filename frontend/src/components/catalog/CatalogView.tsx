@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Search, SlidersHorizontal, Star, Clock, X, Heart } from "lucide-react";
 import { allGenres } from "@/lib/movies";
 import { useAppStore } from "@/lib/store";
@@ -25,8 +25,7 @@ export function CatalogView() {
   const [typeFilter, setTypeFilter] = useState<"all" | "film" | "series">("all");
   const [page, setPage] = useState(1);
 
-  const { openMovie, toggleFavorite, isFavorite, loadMoreMovies, catalogHasMore, loadingMoreMovies } = useAppStore();
-  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const { openMovie, toggleFavorite, isFavorite, loadCatalogPage, catalogTotalPages, loadingMovies } = useAppStore();
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -59,7 +58,7 @@ export function CatalogView() {
       }
     });
     return result;
-  }, [search, activeGenres, minRating, yearRange, sortBy, typeFilter]);
+  }, [movies, search, activeGenres, minRating, yearRange, sortBy, typeFilter]);
 
   // Сброс страницы при изменении фильтров / поиска
   useEffect(() => {
@@ -67,25 +66,14 @@ export function CatalogView() {
   }, [search, activeGenres, minRating, yearRange, sortBy, typeFilter]);
 
   useEffect(() => {
-    const target = loadMoreRef.current;
-    if (!target || !catalogHasMore) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && !loadingMoreMovies) {
-        void loadMoreMovies(search.trim() || undefined);
-      }
-    }, { rootMargin: "480px 0px" });
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [catalogHasMore, loadingMoreMovies, loadMoreMovies, search]);
+    void loadCatalogPage(page, search.trim() || undefined);
+  }, [page, search, loadCatalogPage]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = Math.max(1, catalogTotalPages);
   const safePage = Math.min(page, totalPages);
-  const paginated = filtered.slice(
-    (safePage - 1) * PAGE_SIZE,
-    safePage * PAGE_SIZE
-  );
+  const paginated = filtered;
   const startIdx = filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
-  const endIdx = Math.min(filtered.length, safePage * PAGE_SIZE);
+  const endIdx = filtered.length === 0 ? 0 : startIdx + filtered.length - 1;
 
   const toggleGenre = (g: Genre) =>
     setActiveGenres((prev) =>
@@ -375,21 +363,7 @@ export function CatalogView() {
               }}
             />
           )}
-          <div ref={loadMoreRef} className="flex justify-center mt-6 min-h-12">
-            {loadingMoreMovies ? (
-              <span className="text-sm text-muted-foreground animate-pulse">Подгружаем фильмы…</span>
-            ) : catalogHasMore ? (
-              <button
-                type="button"
-                onClick={() => void loadMoreMovies(search.trim() || undefined)}
-                className="rounded-xl border border-white/10 px-5 py-2.5 text-sm font-semibold hover:bg-white/5 transition-colors"
-              >
-                Показать ещё 20 фильмов
-              </button>
-            ) : (
-              <span className="text-xs text-muted-foreground">Весь доступный каталог загружен</span>
-            )}
-          </div>
+          {loadingMovies && <div className="flex justify-center mt-6 text-sm text-muted-foreground animate-pulse">Загружаем страницу {safePage}…</div>}
         </>
       )}
     </div>

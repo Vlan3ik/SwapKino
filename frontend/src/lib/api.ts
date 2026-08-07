@@ -60,6 +60,15 @@ export interface ImportStatus {
   captcha?: ImportCaptcha | null;
 }
 
+export interface MoviePage {
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  results: ApiMovie[];
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem(TOKEN_KEY);
@@ -71,7 +80,7 @@ export function setToken(token: string | null) {
   else window.localStorage.removeItem(TOKEN_KEY);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, allowRefresh = true): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   if (init.body && !headers.has("Content-Type")) {
@@ -83,8 +92,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers,
+    credentials: "include",
     cache: "no-store",
   });
+  if (response.status === 401 && allowRefresh && !path.startsWith("/auth/")) {
+    try {
+      const refreshed = await request<AuthResponse>("/auth/refresh", { method: "POST" }, false);
+      setToken(refreshed.accessToken);
+      return request<T>(path, init, false);
+    } catch {
+      setToken(null);
+    }
+  }
   const body = await response.text();
   let data: unknown = null;
   if (body) {
@@ -98,6 +117,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const message =
       typeof data === "object" && data && "message" in data
         ? String((data as { message: unknown }).message)
+        : Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] && "description" in data[0]
+        ? data.map((item) => String((item as { description: unknown }).description)).join(" ")
         : `Ошибка API (${response.status})`;
     throw new Error(message);
   }
@@ -111,7 +132,7 @@ export const api = {
     request<AuthResponse>("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<ApiUser>("/auth/me"),
   movies: (page = 1, query?: string) =>
-    request<{ page: number; results: ApiMovie[] }>(
+    request<MoviePage>(
       `/movies?page=${page}${query ? `&q=${encodeURIComponent(query)}` : ""}`
     ),
   movie: (id: number) => request<ApiMovie>(`/movies/${id}`),
@@ -132,6 +153,7 @@ export const api = {
   importStatus: (id: string) => request<ImportStatus>(`/imports/${id}`),
   importResume: (id: string) => request<ImportStatus>(`/imports/${id}/resume`, { method: "POST" }),
   importCancel: (id: string) => request<ImportStatus>(`/imports/${id}/cancel`, { method: "POST" }),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
 };
 
 export function mapApiMovie(movie: ApiMovie): Movie {

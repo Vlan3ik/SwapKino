@@ -58,6 +58,8 @@ interface AppState {
   loadingMovies: boolean;
   loadingMoreMovies: boolean;
   catalogPage: number;
+  catalogTotalPages: number;
+  catalogTotalCount: number;
   catalogHasMore: boolean;
   catalogError: string | null;
   hydrated: boolean;
@@ -68,6 +70,7 @@ interface AppState {
   loadMovie: (movieId: number) => Promise<void>;
   syncViewFromUrl: () => void;
   loadMovies: (query?: string) => Promise<void>;
+  loadCatalogPage: (page: number, query?: string) => Promise<void>;
   loadMoreMovies: (query?: string) => Promise<boolean>;
   restoreSession: () => Promise<void>;
   toggleFavorite: (movieId: number) => void;
@@ -111,6 +114,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadingMovies: false,
   loadingMoreMovies: false,
   catalogPage: 0,
+  catalogTotalPages: 1,
+  catalogTotalCount: 0,
   catalogHasMore: true,
   catalogError: null,
   hydrated: false,
@@ -146,7 +151,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       const rows = response.results.map(mapApiMovie);
       const unique = [...new Map(rows.map((movie) => [movie.id, movie])).values()];
-      set({ movies: unique, catalogPage: 1, catalogHasMore: response.results.length === 20 });
+      set({ movies: unique, catalogPage: 1, catalogTotalPages: "totalPages" in response ? response.totalPages : 1, catalogTotalCount: "totalCount" in response ? response.totalCount : response.results.length, catalogHasMore: "hasNextPage" in response ? response.hasNextPage : response.results.length === 20 });
 
       // Первую карточку показываем сразу, а ещё две страницы спокойно
       // догружаем после отрисовки. Это не блокирует первый экран и сохраняет
@@ -163,6 +168,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (error) {
       set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить фильмы" });
       throw error;
+    } finally {
+      set({ loadingMovies: false });
+    }
+  },
+
+  loadCatalogPage: async (page, query) => {
+    set({ loadingMovies: true, catalogError: null });
+    try {
+      const response = await api.movies(page, query);
+      const rows = response.results.map(mapApiMovie);
+      const unique = [...new Map(rows.map((movie) => [movie.id, movie])).values()];
+      set({ movies: unique, catalogPage: response.page, catalogTotalPages: response.totalPages, catalogTotalCount: response.totalCount, catalogHasMore: response.hasNextPage });
+    } catch (error) {
+      set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить страницу каталога" });
     } finally {
       set({ loadingMovies: false });
     }
@@ -250,5 +269,5 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { ok: true };
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Не удалось войти" }; }
   },
-  logout: () => { setToken(null); set({ user: null, token: null, favorites: [], ratings: {} }); void get().loadMovies(); },
+  logout: () => { void api.logout().catch(() => undefined); setToken(null); set({ user: null, token: null, favorites: [], ratings: {} }); void get().loadMovies(); },
 }));

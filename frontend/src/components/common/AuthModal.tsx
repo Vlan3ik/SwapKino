@@ -164,6 +164,11 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
                   )}
                 </button>
               </div>
+              {mode === "register" && (
+                <p className="text-[11px] text-muted-foreground px-1">
+                  Пароль: минимум 8 символов, заглавная и строчная буква, цифра и спецсимвол.
+                </p>
+              )}
 
               {error && (
                 <motion.div
