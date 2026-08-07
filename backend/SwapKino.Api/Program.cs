@@ -53,3 +53,5 @@ app.Run();
 
 [Microsoft.AspNetCore.Authorization.Authorize]
 public sealed class EventsHub : Microsoft.AspNetCore.SignalR.Hub { public override async Task OnConnectedAsync() { var userId=Context.User?.FindFirstValue(ClaimTypes.NameIdentifier); if(userId is not null) await Groups.AddToGroupAsync(Context.ConnectionId,$"user:{userId}"); await base.OnConnectedAsync(); } }
+
+public partial class Program { }
