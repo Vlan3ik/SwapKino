@@ -76,6 +76,8 @@ def import_ratings(payload: RatingsRequest) -> RatingsResponse:
             exc.driver,
             normalize_profile_url(str(payload.profile_url)),
             payload.include_unrated,
+            exc.collected_items,
+            exc.page_number,
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -109,10 +111,12 @@ def resume_after_captcha(session_id: str) -> RatingsResponse:
     scraper = KinopoiskScraper(settings)
     try:
         with selenium_gate:
-            scraped = scraper.resume(session.driver, session.source_url, session.include_unrated)
+            scraped = scraper.resume(session.driver, session.source_url, session.include_unrated, session.collected_items, session.page_number)
     except CaptchaRequiredError as exc:
         # Selenium-контекст остаётся тем же; пользователь может завершить challenge
         # и вызвать resume ещё раз до истечения TTL.
+        session.collected_items = exc.collected_items
+        session.page_number = exc.page_number
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=captcha_detail(exc, session_id)) from exc
     except ScraperError as exc:
         captcha_sessions.remove(session_id)

@@ -86,7 +86,7 @@ class KinopoiskScraper:
         return "sso." in url or "passport." in url or any(marker in source for marker in markers)
 
     @staticmethod
-    def _captcha_error(driver: webdriver.Chrome) -> CaptchaRequiredError:
+    def _captcha_error(driver: webdriver.Chrome, collected_items: list[ScrapedItem] | None = None, page_number: int = 1) -> CaptchaRequiredError:
         screenshot = None
         try:
             screenshot = driver.get_screenshot_as_base64()
@@ -97,6 +97,8 @@ class KinopoiskScraper:
             page_url=driver.current_url,
             screenshot_base64=screenshot,
             driver=driver,
+            collected_items=collected_items,
+            page_number=page_number,
         )
 
     def _extract_current_page(self, driver: webdriver.Chrome, page_number: int) -> list[ScrapedItem]:
@@ -104,7 +106,8 @@ class KinopoiskScraper:
         const selector = arguments[0];
         const pageNumber = arguments[1];
         return [...document.querySelectorAll(selector)].map(img => {
-          const link = img.parentElement;
+          const link = img.closest('a[href^="/film/"], a[href^="/series/"]');
+          if (!link) return null;
           const card = img.closest('div[data-tid]');
           const caption = card?.querySelector('a[aria-hidden="true"]');
           const raw = img.alt || '';
@@ -121,7 +124,7 @@ class KinopoiskScraper:
             kinopoisk_url: new URL(link.href, location.origin).href,
             page: pageNumber
           };
-        });
+        }).filter(Boolean);
         """
         raw_items = driver.execute_script(script, CARD_SELECTOR, page_number) or []
         return [ScrapedItem(**item) for item in raw_items]
@@ -132,22 +135,29 @@ class KinopoiskScraper:
             .map(a => Number(new URL(a.href, location.origin).searchParams.get('page')) || 1));
         """) or 1)
 
-    def _collect(self, driver: webdriver.Chrome, source_url: str, include_unrated: bool) -> list[ScrapedItem]:
+    def _collect(self, driver: webdriver.Chrome, source_url: str, include_unrated: bool, start_page: int = 1, initial_items: list[ScrapedItem] | None = None) -> list[ScrapedItem]:
+        items: list[ScrapedItem] = list(initial_items or [])
         if self._captcha_or_blocked(driver):
-            raise self._captcha_error(driver)
-        WebDriverWait(driver, self.settings.selenium_element_timeout_seconds).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, CARD_SELECTOR))
-        )
-        last_page = min(self._last_page(driver), self.settings.selenium_max_pages)
-        items: list[ScrapedItem] = []
-        for page_number in range(1, last_page + 1):
-            if page_number > 1:
+            raise self._captcha_error(driver, items, start_page)
+        try:
+            WebDriverWait(driver, self.settings.selenium_element_timeout_seconds).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, CARD_SELECTOR))
+            )
+        except TimeoutException:
+            # Пустой профиль — валидный результат, а не ошибка Selenium.
+            return [] if not items else items
+        last_page = min(max(self._last_page(driver), start_page), self.settings.selenium_max_pages)
+        for page_number in range(start_page, last_page + 1):
+            if page_number > start_page:
                 driver.get(with_page(source_url, page_number))
                 if self._captcha_or_blocked(driver):
-                    raise self._captcha_error(driver)
-                WebDriverWait(driver, self.settings.selenium_element_timeout_seconds).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, CARD_SELECTOR))
-                )
+                    raise self._captcha_error(driver, items, page_number)
+                try:
+                    WebDriverWait(driver, self.settings.selenium_element_timeout_seconds).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, CARD_SELECTOR))
+                    )
+                except TimeoutException:
+                    break
             items.extend(self._extract_current_page(driver, page_number))
             if len(items) >= self.settings.selenium_max_items:
                 break
@@ -175,5 +185,5 @@ class KinopoiskScraper:
             if driver is not None and not keep_driver:
                 driver.quit()
 
-    def resume(self, driver: webdriver.Chrome, source_url: str, include_unrated: bool) -> list[ScrapedItem]:
-        return self._collect(driver, source_url, include_unrated)
+    def resume(self, driver: webdriver.Chrome, source_url: str, include_unrated: bool, initial_items: list[ScrapedItem] | None = None, start_page: int = 1) -> list[ScrapedItem]:
+        return self._collect(driver, source_url, include_unrated, start_page=start_page, initial_items=initial_items)

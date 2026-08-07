@@ -12,11 +12,15 @@ class CaptchaRequiredError(ScraperError):
         page_url: str | None = None,
         screenshot_base64: str | None = None,
         driver: object | None = None,
+        collected_items: list[object] | None = None,
+        page_number: int = 1,
     ):
         super().__init__(message)
         self.page_url = page_url
         self.screenshot_base64 = screenshot_base64
         self.driver = driver
+        self.collected_items = collected_items or []
+        self.page_number = page_number
 
 
 class InvalidProfileError(ScraperError):

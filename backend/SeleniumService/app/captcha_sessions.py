@@ -10,6 +10,8 @@ class CaptchaSession:
     driver: object
     source_url: str
     include_unrated: bool
+    collected_items: list[object]
+    page_number: int
     expires_at: datetime
 
 
@@ -31,7 +33,7 @@ class CaptchaSessionStore:
             except Exception:
                 pass
 
-    def add(self, driver: object, source_url: str, include_unrated: bool) -> CaptchaSession:
+    def add(self, driver: object, source_url: str, include_unrated: bool, collected_items: list[object] | None = None, page_number: int = 1) -> CaptchaSession:
         with self._lock:
             self._cleanup_locked()
             session = CaptchaSession(
@@ -39,6 +41,8 @@ class CaptchaSessionStore:
                 driver=driver,
                 source_url=source_url,
                 include_unrated=include_unrated,
+                collected_items=collected_items or [],
+                page_number=page_number,
                 expires_at=datetime.now(timezone.utc) + self.ttl,
             )
             self._sessions[session.session_id] = session
