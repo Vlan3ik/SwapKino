@@ -70,7 +70,13 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
         }
         catch (HttpRequestException)
         {
-            return await Fallback(search, page, ct);
+            if (config.GetValue("TMDB_ALLOW_FALLBACK", false)) return await Fallback(search, page, ct);
+            return await db.Movies.AsNoTracking()
+                .Where(x => string.IsNullOrWhiteSpace(search) || x.Title.Contains(search) || (x.OriginalTitle != null && x.OriginalTitle.Contains(search)))
+                .OrderByDescending(x => x.Popularity)
+                .Skip(Math.Max(0, page - 1) * 20)
+                .Take(20)
+                .ToListAsync(ct);
         }
     }
 
@@ -99,10 +105,11 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
         }
         catch (HttpRequestException)
         {
-            var fallback = FallbackCatalog.FirstOrDefault(x => x.TmdbId == id);
-            if (fallback is null) throw;
             var existing = await db.Movies.FindAsync([id], ct);
             if (existing is not null) return existing;
+            if (!config.GetValue("TMDB_ALLOW_FALLBACK", false)) throw;
+            var fallback = FallbackCatalog.FirstOrDefault(x => x.TmdbId == id);
+            if (fallback is null) throw;
             db.Movies.Add(fallback);
             await db.SaveChangesAsync(ct);
             return fallback;

@@ -49,6 +49,7 @@ services:
       CORS_ORIGINS: http://localhost,http://localhost:3000
       CATALOG_WARMUP_PAGES: 5
       CATALOG_SYNC_INTERVAL_HOURS: 6
+      TMDB_ALLOW_FALLBACK: "false"
     expose: ["8000"]
     depends_on: {postgres: {condition: service_healthy}, redis-runtime: {condition: service_started}}
     mem_limit: 512m
