@@ -168,9 +168,27 @@ public sealed class ImportStreamWorker(
         }
         catch (Exception ex)
         {
-            // Без ACK сообщение будет автоматически перехвачено после lease.
-            // Idempotent staging и статус ImportJob делают повтор безопасным.
-            Log.LogError(ex, "Import event {EventId} failed; it will be reclaimed", entry.Id);
+            var pending = await Redis.StreamPendingMessagesAsync(Stream, Group, 1, consumer, entry.Id, entry.Id);
+            var deliveries = pending.Length == 0 ? 1 : pending[0].DeliveryCount;
+            if (deliveries >= 5)
+            {
+                await Redis.StreamAddAsync("swapkino:events:dead-letter", new[]
+                {
+                    new NameValueEntry("event_id", Value(entry, "event_id")),
+                    new NameValueEntry("topic", topic),
+                    new NameValueEntry("payload", Value(entry, "payload")),
+                    new NameValueEntry("error", ex.Message),
+                    new NameValueEntry("attempts", deliveries),
+                });
+                await Redis.StreamAcknowledgeAsync(Stream, Group, entry.Id);
+                Log.LogError(ex, "Import event {EventId} moved to dead-letter after {Attempts} attempts", entry.Id, deliveries);
+            }
+            else
+            {
+                // Без ACK сообщение будет автоматически перехвачено после lease.
+                // Idempotent staging и статус ImportJob делают повтор безопасным.
+                Log.LogError(ex, "Import event {EventId} failed on delivery {Attempt}; it will be reclaimed", entry.Id, deliveries);
+            }
         }
     }
 
