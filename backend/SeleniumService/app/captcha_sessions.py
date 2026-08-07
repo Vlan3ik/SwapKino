@@ -53,6 +53,20 @@ class CaptchaSessionStore:
             self._cleanup_locked()
             return self._sessions.get(session_id)
 
+    def cleanup(self) -> None:
+        with self._lock:
+            self._cleanup_locked()
+
+    def close_all(self) -> None:
+        with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
+            try:
+                session.driver.quit()
+            except Exception:
+                pass
+
     def remove(self, session_id: str) -> None:
         with self._lock:
             session = self._sessions.pop(session_id, None)

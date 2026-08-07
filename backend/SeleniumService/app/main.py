@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import threading
 from contextlib import asynccontextmanager
 
@@ -19,7 +20,18 @@ selenium_gate = threading.BoundedSemaphore(value=max(1, settings.selenium_max_co
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
+    async def cleanup_loop() -> None:
+        while True:
+            await asyncio.sleep(30)
+            captcha_sessions.cleanup()
+
+    task = asyncio.create_task(cleanup_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        captcha_sessions.close_all()
 
 
 app = FastAPI(
