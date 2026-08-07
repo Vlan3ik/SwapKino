@@ -44,7 +44,8 @@ app.MapGet("/ready", async (SwapKinoDbContext db, IConnectionMultiplexer redis, 
     {
         if (!await db.Database.CanConnectAsync(ct)) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         await redis.GetDatabase().PingAsync();
-        return Results.Ok(new { status = "ready", database = "ok", redis = "ok" });
+        if (redis.GetDatabase().StringGet("swapkino:worker:heartbeat").IsNullOrEmpty) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        return Results.Ok(new { status = "ready", database = "ok", redis = "ok", worker = "ok" });
     }
     catch { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
 });

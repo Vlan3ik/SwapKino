@@ -33,6 +33,7 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
         {
             try
             {
+                await Redis.StringSetAsync("swapkino:worker:heartbeat", workerId, TimeSpan.FromSeconds(15));
                 using var scope = Scopes.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
                 foreach (var item in await ClaimEvents(db, stoppingToken))
