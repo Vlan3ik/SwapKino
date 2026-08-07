@@ -114,8 +114,21 @@ async function request<T>(path: string, init: RequestInit = {}, allowRefresh = t
     }
   }
   if (!response.ok) {
+    const identityErrors = typeof data === "object" && data && "errors" in data && Array.isArray((data as { errors: unknown }).errors)
+      ? ((data as { errors: Array<{ code?: string; description?: string }> }).errors)
+      : null;
+    const identityMessages = identityErrors?.map((error) => ({
+      PasswordTooShort: "пароль должен содержать минимум 8 символов",
+      PasswordRequiresNonAlphanumeric: "добавь специальный символ",
+      PasswordRequiresLower: "добавь строчную букву",
+      PasswordRequiresUpper: "добавь заглавную букву",
+      PasswordRequiresDigit: "добавь цифру",
+      DuplicateUserName: "пользователь с таким email уже зарегистрирован",
+    }[error.code ?? ""] ?? error.description ?? "проверь введённые данные")).filter(Boolean);
     const message =
-      typeof data === "object" && data && "message" in data
+      identityMessages && identityMessages.length > 0
+        ? identityMessages.join("; ")
+        : typeof data === "object" && data && "message" in data
         ? String((data as { message: unknown }).message)
         : Array.isArray(data) && data.length > 0 && typeof data[0] === "object" && data[0] && "description" in data[0]
         ? data.map((item) => String((item as { description: unknown }).description)).join(" ")

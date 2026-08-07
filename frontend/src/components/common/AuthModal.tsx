@@ -24,6 +24,15 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const passwordRules = [
+    { label: "не менее 8 символов", valid: password.length >= 8 },
+    { label: "строчная буква", valid: /[a-zа-я]/.test(password) },
+    { label: "заглавная буква", valid: /[A-ZА-Я]/.test(password) },
+    { label: "цифра", valid: /\d/.test(password) },
+    { label: "спецсимвол", valid: /[^\p{L}\p{N}]/u.test(password) },
+  ];
+  const passwordIsStrong = passwordRules.every((rule) => rule.valid);
+
   const reset = () => {
     setIdentifier("");
     setUsername("");
@@ -36,6 +45,11 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (mode === "register" && !passwordIsStrong) {
+      const missing = passwordRules.filter((rule) => !rule.valid).map((rule) => rule.label);
+      setError(`Пароль не надёжен. Добавь: ${missing.join(", ")}.`);
+      return;
+    }
     setLoading(true);
     const result =
       mode === "login"
@@ -151,6 +165,8 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
                   placeholder="Пароль"
                   value={password}
                   onChange={setPassword}
+                  minLength={mode === "register" ? 8 : undefined}
+                  autoComplete={mode === "register" ? "new-password" : "current-password"}
                 />
                 <button
                   type="button"
@@ -165,9 +181,18 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
                 </button>
               </div>
               {mode === "register" && (
-                <p className="text-[11px] text-muted-foreground px-1">
-                  Пароль: минимум 8 символов, заглавная и строчная буква, цифра и спецсимвол.
-                </p>
+                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 space-y-1.5">
+                  <p className={cn("text-xs font-semibold", passwordIsStrong ? "text-like" : "text-muted-foreground")}>
+                    {passwordIsStrong ? "Пароль надёжный" : "Пароль не надёжен"}
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                    {passwordRules.map((rule) => (
+                      <span key={rule.label} className={cn("text-[11px]", rule.valid ? "text-like" : "text-muted-foreground")}>
+                        {rule.valid ? "✓" : "○"} {rule.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {error && (
@@ -239,6 +264,8 @@ function Field({
   value,
   onChange,
   autoFocus,
+  minLength,
+  autoComplete,
 }: {
   icon: React.ReactNode;
   type: string;
@@ -246,6 +273,8 @@ function Field({
   value: string;
   onChange: (v: string) => void;
   autoFocus?: boolean;
+  minLength?: number;
+  autoComplete?: string;
 }) {
   return (
     <div className="relative">
@@ -258,6 +287,8 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         autoFocus={autoFocus}
+        minLength={minLength}
+        autoComplete={autoComplete}
         className="w-full bg-black/30 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-rating/30 transition-all"
       />
     </div>
