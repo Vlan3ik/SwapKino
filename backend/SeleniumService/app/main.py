@@ -128,3 +128,15 @@ def resume_after_captcha(session_id: str) -> RatingsResponse:
         unrated=sum(item.rating is None for item in items),
         items=items,
     )
+
+
+@app.delete(
+    "/api/v1/kinopoisk/captcha/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["kinopoisk"],
+    summary="Отменить браузерную CAPTCHA-сессию",
+)
+def cancel_captcha_session(session_id: str) -> None:
+    if captcha_sessions.get(session_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CAPTCHA-сессия не найдена или истекла")
+    captcha_sessions.remove(session_id)

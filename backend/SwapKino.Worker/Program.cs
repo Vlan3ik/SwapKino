@@ -155,6 +155,12 @@ public sealed class ImportStreamWorker(
                 if (payload is not null)
                     await ProcessImport(payload, ct);
             }
+            else if (topic == "kinopoisk.import.resume")
+            {
+                var payload = JsonSerializer.Deserialize<ResumePayload>(Value(entry, "payload"));
+                if (payload is not null)
+                    await ProcessResume(payload, ct);
+            }
 
             // Нерелевантные для import-worker события тоже подтверждаем, чтобы
             // они не оставались бесконечно в pending-list consumer group.
@@ -181,52 +187,19 @@ public sealed class ImportStreamWorker(
         await RunImport(db, job, payload.ProfileUrl, ct);
     }
 
-    private async Task RunImport(SwapKinoDbContext db, ImportJob job, string profileUrl, CancellationToken ct)
+    private async Task ProcessResume(ResumePayload payload, CancellationToken ct)
     {
+        using var scope = Scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
+        var job = await db.ImportJobs.FindAsync([payload.JobId], ct);
+        if (job is null || job.Status is "Completed" or "Cancelled") return;
+        job.Status = "Running";
+        job.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
         try
         {
-            using var response = await http.CreateClient("selenium").PostAsJsonAsync(
-                "/api/v1/kinopoisk/ratings",
-                new { profile_url = profileUrl, include_unrated = true },
-                ct);
-
-            if ((int)response.StatusCode == 409)
-            {
-                job.Status = "WaitingForUser";
-                job.Progress = 25;
-                job.Checkpoint = await response.Content.ReadAsStringAsync(ct);
-                job.UpdatedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync(ct);
-                return;
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                job.Status = "Failed";
-                job.Error = $"Selenium returned {(int)response.StatusCode}";
-                job.UpdatedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync(ct);
-                return;
-            }
-
-            var payload = await response.Content.ReadFromJsonAsync<RatingsResponse>(cancellationToken: ct)
-                ?? throw new InvalidOperationException("Selenium returned an empty response");
-            var existing = await db.ImportItems.Where(x => x.ImportJobId == job.Id).ToDictionaryAsync(x => x.KinopoiskUrl, ct);
-            foreach (var item in payload.Items)
-            {
-                if (existing.ContainsKey(item.KinopoiskUrl)) continue;
-                var row = new ImportItem { ImportJobId = job.Id, KinopoiskUrl = item.KinopoiskUrl, Title = item.Title, Year = item.Year, Genres = item.Genres, Rating = item.Rating, Kind = item.Kind, Page = item.Page };
-                db.ImportItems.Add(row);
-                existing[item.KinopoiskUrl] = row;
-            }
-
-            await db.SaveChangesAsync(ct);
-            await ApplyMatches(db, job, existing.Values, ct);
-            job.ImportedCount = existing.Count;
-            job.Progress = 100;
-            job.Status = "Completed";
-            job.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            using var response = await http.CreateClient("selenium").PostAsync($"/api/v1/kinopoisk/captcha/{Uri.EscapeDataString(payload.SessionId)}/resume", null, ct);
+            await HandleImportResponse(db, job, response, ct);
         }
         catch (Exception ex)
         {
@@ -236,6 +209,64 @@ public sealed class ImportStreamWorker(
             await db.SaveChangesAsync(ct);
             throw;
         }
+    }
+
+    private async Task RunImport(SwapKinoDbContext db, ImportJob job, string profileUrl, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await http.CreateClient("selenium").PostAsJsonAsync(
+                "/api/v1/kinopoisk/ratings",
+                new { profile_url = profileUrl, include_unrated = true },
+                ct);
+            await HandleImportResponse(db, job, response, ct);
+        }
+        catch (Exception ex)
+        {
+            job.Status = "Failed";
+            job.Error = ex.Message;
+            job.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            throw;
+        }
+    }
+
+    private static async Task HandleImportResponse(SwapKinoDbContext db, ImportJob job, HttpResponseMessage response, CancellationToken ct)
+    {
+        if ((int)response.StatusCode == 409)
+        {
+            job.Status = "WaitingForUser";
+            job.Progress = 25;
+            job.Checkpoint = await response.Content.ReadAsStringAsync(ct);
+            job.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            job.Status = "Failed";
+            job.Error = $"Selenium returned {(int)response.StatusCode}";
+            job.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+        var payload = await response.Content.ReadFromJsonAsync<RatingsResponse>(cancellationToken: ct)
+            ?? throw new InvalidOperationException("Selenium returned an empty response");
+        var existing = await db.ImportItems.Where(x => x.ImportJobId == job.Id).ToDictionaryAsync(x => x.KinopoiskUrl, ct);
+        foreach (var item in payload.Items)
+        {
+            if (existing.ContainsKey(item.KinopoiskUrl)) continue;
+            var row = new ImportItem { ImportJobId = job.Id, KinopoiskUrl = item.KinopoiskUrl, Title = item.Title, Year = item.Year, Genres = item.Genres, Rating = item.Rating, Kind = item.Kind, Page = item.Page };
+            db.ImportItems.Add(row);
+            existing[item.KinopoiskUrl] = row;
+        }
+        await db.SaveChangesAsync(ct);
+        await ApplyMatches(db, job, existing.Values, ct);
+        job.ImportedCount = existing.Count;
+        job.Progress = 100;
+        job.Status = "Completed";
+        job.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
     }
 
     private static async Task ApplyMatches(SwapKinoDbContext db, ImportJob job, IEnumerable<ImportItem> items, CancellationToken ct)
@@ -257,6 +288,7 @@ public sealed class ImportStreamWorker(
     private static string Value(StreamEntry entry, string name) => entry.Values.FirstOrDefault(x => x.Name == name).Value.ToString();
     private static string Normalize(string value) => new string(value.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
     private sealed record ImportPayload(Guid JobId, Guid UserId, string ProfileUrl);
+    private sealed record ResumePayload(Guid JobId, Guid UserId, string ProfileUrl, string SessionId);
     private sealed record RatingsResponse(int Total, int Rated, int Unrated, [property: JsonPropertyName("items")] List<RatingItem> Items);
     private sealed record RatingItem(string Title, int? Year, string? Genres, double? Rating, string Kind, [property: JsonPropertyName("kinopoisk_url")] string KinopoiskUrl, int Page);
 }

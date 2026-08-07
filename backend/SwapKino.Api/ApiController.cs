@@ -12,7 +12,7 @@ using System.Text;
 namespace SwapKino.Api;
 [ApiController]
 [Route("api/v1")]
-public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, IConfiguration config, TmdbClient tmdb, IDistributedCache cache) : ControllerBase
+public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, IConfiguration config, TmdbClient tmdb, IDistributedCache cache, IHttpClientFactory http) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddDays(30),signingCredentials:creds)); }
@@ -111,6 +111,46 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var job=new ImportJob{UserId=UserId,ProfileUrl=request.ProfileUrl}; db.ImportJobs.Add(job); db.OutboxEvents.Add(new OutboxEvent{Topic="kinopoisk.import",Payload=JsonSerializer.Serialize(new{jobId=job.Id,userId=UserId,profileUrl=request.ProfileUrl})}); await db.SaveChangesAsync(ct); return Accepted(new{id=job.Id,status=job.Status,progress=job.Progress});
     }
     [HttpGet("imports/{id:guid}")][Authorize] public async Task<IActionResult> Import(Guid id, CancellationToken ct) { var j=await db.ImportJobs.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==id&&x.UserId==UserId, ct); return j is null?NotFound():Ok(new{id=j.Id,status=j.Status,progress=j.Progress,importedCount=j.ImportedCount,error=j.Error,createdAt=j.CreatedAt,updatedAt=j.UpdatedAt}); }
+    [HttpPost("imports/{id:guid}/resume")][Authorize] public async Task<IActionResult> ResumeImport(Guid id, CancellationToken ct)
+    {
+        var job = await db.ImportJobs.FirstOrDefaultAsync(x => x.Id == id && x.UserId == UserId, ct);
+        if (job is null) return NotFound();
+        if (job.Status != "WaitingForUser") return Conflict(new { message = "Импорт не ожидает прохождения CAPTCHA", status = job.Status });
+        var sessionId = TrySessionId(job.Checkpoint);
+        if (sessionId is null) return Conflict(new { message = "Сессия CAPTCHA недоступна, запустите импорт заново" });
+        job.Status = "Queued";
+        job.UpdatedAt = DateTime.UtcNow;
+        db.OutboxEvents.Add(new OutboxEvent { Topic = "kinopoisk.import.resume", Payload = JsonSerializer.Serialize(new { jobId = job.Id, userId = UserId, profileUrl = job.ProfileUrl, sessionId }) });
+        await db.SaveChangesAsync(ct);
+        return Accepted(new { id = job.Id, status = job.Status, progress = job.Progress });
+    }
+    [HttpPost("imports/{id:guid}/cancel")][Authorize] public async Task<IActionResult> CancelImport(Guid id, CancellationToken ct)
+    {
+        var job = await db.ImportJobs.FirstOrDefaultAsync(x => x.Id == id && x.UserId == UserId, ct);
+        if (job is null) return NotFound();
+        if (job.Status is "Completed" or "Failed" or "Cancelled") return Ok(new { id = job.Id, status = job.Status });
+        var sessionId = TrySessionId(job.Checkpoint);
+        if (sessionId is not null)
+        {
+            try { await http.CreateClient("selenium").DeleteAsync($"/api/v1/kinopoisk/captcha/{Uri.EscapeDataString(sessionId)}", ct); }
+            catch (HttpRequestException) { }
+        }
+        job.Status = "Cancelled";
+        job.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return Ok(new { id = job.Id, status = job.Status });
+    }
     [HttpGet("imports/{id:guid}/items")][Authorize] public async Task<IActionResult> ImportItems(Guid id, CancellationToken ct) { var owns=await db.ImportJobs.AsNoTracking().AnyAsync(x=>x.Id==id&&x.UserId==UserId,ct); if(!owns)return NotFound(); var items=await db.ImportItems.AsNoTracking().Where(x=>x.ImportJobId==id).OrderBy(x=>x.Id).Select(x=>new{id=x.Id,title=x.Title,year=x.Year,genres=x.Genres,rating=x.Rating,kind=x.Kind,kinopoiskUrl=x.KinopoiskUrl,page=x.Page,matchStatus=x.MatchStatus,tmdbId=x.TmdbId,matchError=x.MatchError}).ToListAsync(ct); return Ok(new{items}); }
+    private static string? TrySessionId(string checkpoint)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(checkpoint);
+            if (doc.RootElement.TryGetProperty("detail", out var detail) && detail.TryGetProperty("session_id", out var nested)) return nested.GetString();
+            if (doc.RootElement.TryGetProperty("session_id", out var direct)) return direct.GetString();
+        }
+        catch (JsonException) { }
+        return null;
+    }
 }
 public sealed record RegisterRequest(string Email,string Password,string? DisplayName); public sealed record LoginRequest(string Email,string Password); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey); public sealed record ImportRequest(string ProfileUrl);
