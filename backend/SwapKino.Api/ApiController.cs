@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
+using System.Security.Cryptography;
 
 namespace SwapKino.Api;
 [ApiController]
@@ -16,19 +17,57 @@ namespace SwapKino.Api;
 public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, TmdbClient tmdb, IDistributedCache cache, IHttpClientFactory http) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-    private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddDays(30),signingCredentials:creds)); }
+    private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddHours(2),signingCredentials:creds)); }
+    private async Task<string> CreateRefreshSession(User user, CancellationToken ct)
+    {
+        var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
+        db.RefreshSessions.Add(new RefreshSession { UserId = user.Id, TokenHash = hash, ExpiresAt = DateTime.UtcNow.AddDays(30) });
+        await db.SaveChangesAsync(ct);
+        Response.Cookies.Append("swapkino-refresh", raw, new CookieOptions { HttpOnly = true, Secure = Request.IsHttps, SameSite = SameSiteMode.Lax, MaxAge = TimeSpan.FromDays(30), Path = "/api/v1/auth" });
+        return raw;
+    }
+    private async Task<IActionResult> AuthResponse(User user, CancellationToken ct, int statusCode = StatusCodes.Status200OK)
+    {
+        await CreateRefreshSession(user, ct);
+        return StatusCode(statusCode, new { accessToken = Token(user), user = new { id = user.Id, email = user.Email, displayName = user.DisplayName } });
+    }
     [HttpPost("auth/register")][EnableRateLimiting("auth")]
     [ProducesResponseType(StatusCodes.Status201Created)]
-    public async Task<IActionResult> Register(RegisterRequest request) { if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(result.Errors); return Created("",new{accessToken=Token(u),user=new{id=u.Id,email=u.Email,displayName=u.DisplayName}}); }
+    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct) { if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(result.Errors); return await AuthResponse(u, ct, StatusCodes.Status201Created); }
     [HttpPost("auth/login")][EnableRateLimiting("auth")]
-    public async Task<IActionResult> Login(LoginRequest request)
+    public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct)
     {
         var u = await users.FindByEmailAsync(request.Email) ?? await users.FindByNameAsync(request.Email);
         if (u is null) return Unauthorized(new { message = "Invalid email or password" });
         var result = await signIn.CheckPasswordSignInAsync(u, request.Password, lockoutOnFailure: true);
         if (result.IsLockedOut) return StatusCode(StatusCodes.Status423Locked, new { message = "Слишком много неудачных попыток. Попробуйте через 15 минут." });
         if (!result.Succeeded) return Unauthorized(new { message = "Invalid email or password" });
-        return Ok(new { accessToken = Token(u), user = new { id = u.Id, email = u.Email, displayName = u.DisplayName } });
+        return await AuthResponse(u, ct);
+    }
+    [HttpPost("auth/refresh")][EnableRateLimiting("auth")]
+    public async Task<IActionResult> Refresh(CancellationToken ct)
+    {
+        if (!Request.Cookies.TryGetValue("swapkino-refresh", out var raw) || string.IsNullOrWhiteSpace(raw)) return Unauthorized();
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
+        var session = await db.RefreshSessions.FirstOrDefaultAsync(x => x.TokenHash == hash && x.RevokedAt == null && x.ExpiresAt > DateTime.UtcNow, ct);
+        if (session is null) return Unauthorized();
+        var user = await users.FindByIdAsync(session.UserId.ToString());
+        if (user is null) return Unauthorized();
+        session.RevokedAt = DateTime.UtcNow;
+        return await AuthResponse(user, ct);
+    }
+    [HttpPost("auth/logout")]
+    public async Task<IActionResult> Logout(CancellationToken ct)
+    {
+        if (Request.Cookies.TryGetValue("swapkino-refresh", out var raw))
+        {
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
+            var session = await db.RefreshSessions.FirstOrDefaultAsync(x => x.TokenHash == hash && x.RevokedAt == null, ct);
+            if (session is not null) { session.RevokedAt = DateTime.UtcNow; await db.SaveChangesAsync(ct); }
+        }
+        Response.Cookies.Delete("swapkino-refresh", new CookieOptions { Path = "/api/v1/auth" });
+        return NoContent();
     }
     [HttpGet("auth/me")][Authorize]
     public async Task<IActionResult> Me() { var user=await users.FindByIdAsync(UserId.ToString()); return user is null?Unauthorized():Ok(new{id=user.Id,email=user.Email,displayName=user.DisplayName,createdAt=user.CreatedAt}); }

@@ -16,8 +16,10 @@ public sealed class CatalogWarmupService(
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
-            var target = Math.Clamp(config.GetValue("CATALOG_WARMUP_PAGES", 5), 1, 20);
+            var target = Math.Clamp(config.GetValue("CATALOG_WARMUP_PAGES", 5), 1, 500);
             await SyncPopular(target, forceRefresh: false, ct: stoppingToken);
+            var topRatedPages = Math.Clamp(config.GetValue("CATALOG_TOP_RATED_PAGES", 25), 0, 200);
+            await SyncTopRated(topRatedPages, ct: stoppingToken);
 
             var intervalHours = Math.Clamp(config.GetValue("CATALOG_SYNC_INTERVAL_HOURS", 6), 1, 168);
             using var timer = new PeriodicTimer(TimeSpan.FromHours(intervalHours));
@@ -53,6 +55,19 @@ public sealed class CatalogWarmupService(
         {
             var rows = await tmdb.Discover(page, null, ct, forceRefresh);
             log.LogInformation("Catalog sync page {Page}/{Target}: {Count} movies", page, target, rows.Count);
+            await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+        }
+    }
+
+    private async Task SyncTopRated(int target, CancellationToken ct)
+    {
+        if (target == 0) return;
+        using var scope = scopes.CreateScope();
+        var tmdb = scope.ServiceProvider.GetRequiredService<TmdbClient>();
+        for (var page = 1; page <= target && !ct.IsCancellationRequested; page++)
+        {
+            var rows = await tmdb.Discover(page, null, ct, forceRefresh: false, endpoint: "/movie/top_rated");
+            log.LogInformation("Top-rated catalog sync page {Page}/{Target}: {Count} movies", page, target, rows.Count);
             await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
         }
     }

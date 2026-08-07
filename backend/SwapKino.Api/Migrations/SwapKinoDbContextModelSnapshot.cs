@@ -310,6 +310,39 @@ namespace SwapKino.Api.Migrations
                     b.ToTable("Movies");
                 });
 
+            modelBuilder.Entity("SwapKino.Api.RefreshSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "ExpiresAt");
+
+                    b.ToTable("RefreshSessions");
+                });
+
             modelBuilder.Entity("SwapKino.Api.OutboxEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -521,6 +554,15 @@ namespace SwapKino.Api.Migrations
                     b.HasOne("SwapKino.Api.ImportJob", null)
                         .WithMany()
                         .HasForeignKey("ImportJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("SwapKino.Api.RefreshSession", b =>
+                {
+                    b.HasOne("SwapKino.Api.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -31,9 +31,9 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
         }
     }
 
-    public async Task<List<Movie>> Discover(int page, string? search, CancellationToken ct, bool forceRefresh = false)
+    public async Task<List<Movie>> Discover(int page, string? search, CancellationToken ct, bool forceRefresh = false, string endpoint = "/discover/movie")
     {
-        if (!forceRefresh && string.IsNullOrWhiteSpace(search))
+        if (!forceRefresh && string.IsNullOrWhiteSpace(search) && endpoint == "/discover/movie")
         {
             var cached = await db.Movies
                 .AsNoTracking()
@@ -46,7 +46,7 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
 
         try
         {
-            var json = await Get(search is null ? "/discover/movie" : "/search/movie", new() { ["language"] = "ru-RU", ["page"] = page.ToString(), ["query"] = search, ["include_adult"] = "false", ["sort_by"] = "popularity.desc" }, ct);
+            var json = await Get(search is null ? endpoint : "/search/movie", new() { ["language"] = "ru-RU", ["page"] = page.ToString(), ["query"] = search, ["include_adult"] = "false", ["sort_by"] = endpoint == "/discover/movie" ? "popularity.desc" : null }, ct);
             var result = new List<Movie>();
             foreach (var x in json.RootElement.GetProperty("results").EnumerateArray())
             {

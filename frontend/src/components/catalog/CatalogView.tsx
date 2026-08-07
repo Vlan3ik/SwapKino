@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Search, SlidersHorizontal, Star, Clock, X, Heart } from "lucide-react";
 import { allGenres } from "@/lib/movies";
 import { useAppStore } from "@/lib/store";
@@ -12,19 +12,21 @@ import type { Genre } from "@/types";
 type SortKey = "rating-desc" | "rating-asc" | "year-desc" | "year-asc" | "title";
 
 const PAGE_SIZE = 20;
+const MAX_CATALOG_YEAR = new Date().getFullYear();
 
 export function CatalogView() {
   const movies = useAppStore((s) => s.movies);
   const [search, setSearch] = useState("");
   const [activeGenres, setActiveGenres] = useState<Genre[]>([]);
   const [minRating, setMinRating] = useState(0);
-  const [yearRange, setYearRange] = useState<[number, number]>([1970, 2025]);
+  const [yearRange, setYearRange] = useState<[number, number]>([1970, MAX_CATALOG_YEAR]);
   const [sortBy, setSortBy] = useState<SortKey>("rating-desc");
   const [showFilters, setShowFilters] = useState(true);
   const [typeFilter, setTypeFilter] = useState<"all" | "film" | "series">("all");
   const [page, setPage] = useState(1);
 
-  const { openMovie, toggleFavorite, isFavorite } = useAppStore();
+  const { openMovie, toggleFavorite, isFavorite, loadMoreMovies, catalogHasMore, loadingMoreMovies } = useAppStore();
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -64,6 +66,18 @@ export function CatalogView() {
     setPage(1);
   }, [search, activeGenres, minRating, yearRange, sortBy, typeFilter]);
 
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !catalogHasMore) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && !loadingMoreMovies) {
+        void loadMoreMovies(search.trim() || undefined);
+      }
+    }, { rootMargin: "480px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [catalogHasMore, loadingMoreMovies, loadMoreMovies, search]);
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const paginated = filtered.slice(
@@ -82,7 +96,7 @@ export function CatalogView() {
     setSearch("");
     setActiveGenres([]);
     setMinRating(0);
-    setYearRange([1970, 2025]);
+    setYearRange([1970, MAX_CATALOG_YEAR]);
     setSortBy("rating-desc");
     setTypeFilter("all");
     setPage(1);
@@ -92,7 +106,7 @@ export function CatalogView() {
     activeGenres.length +
     (minRating > 0 ? 1 : 0) +
     (typeFilter !== "all" ? 1 : 0) +
-    (yearRange[0] !== 1970 || yearRange[1] !== 2025 ? 1 : 0);
+    (yearRange[0] !== 1970 || yearRange[1] !== MAX_CATALOG_YEAR ? 1 : 0);
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
@@ -245,7 +259,7 @@ export function CatalogView() {
               </div>
               <RangeSlider
                 min={1970}
-                max={2025}
+                max={MAX_CATALOG_YEAR}
                 step={1}
                 value={yearRange}
                 onChange={setYearRange}
@@ -361,6 +375,21 @@ export function CatalogView() {
               }}
             />
           )}
+          <div ref={loadMoreRef} className="flex justify-center mt-6 min-h-12">
+            {loadingMoreMovies ? (
+              <span className="text-sm text-muted-foreground animate-pulse">Подгружаем фильмы…</span>
+            ) : catalogHasMore ? (
+              <button
+                type="button"
+                onClick={() => void loadMoreMovies(search.trim() || undefined)}
+                className="rounded-xl border border-white/10 px-5 py-2.5 text-sm font-semibold hover:bg-white/5 transition-colors"
+              >
+                Показать ещё 20 фильмов
+              </button>
+            ) : (
+              <span className="text-xs text-muted-foreground">Весь доступный каталог загружен</span>
+            )}
+          </div>
         </>
       )}
     </div>

@@ -8,6 +8,7 @@ services:
       POSTGRES_USER: swapkino
       POSTGRES_PASSWORD: swapkino
     volumes: ["postgres-data:/var/lib/postgresql/data"]
+    restart: unless-stopped
     healthcheck: {test: ["CMD-SHELL", "pg_isready -U swapkino -d swapkino"], interval: 5s, timeout: 5s, retries: 10}
     mem_limit: 768m
     cpus: 1.0
@@ -47,7 +48,8 @@ services:
       REDIS_CACHE_URL: redis-cache:6379,abortConnect=false
       SELENIUM_URL: http://selenium-service:8081
       CORS_ORIGINS: http://localhost,http://localhost:3000
-      CATALOG_WARMUP_PAGES: 5
+      CATALOG_WARMUP_PAGES: 50
+      CATALOG_TOP_RATED_PAGES: 25
       CATALOG_SYNC_INTERVAL_HOURS: 6
       TMDB_ALLOW_FALLBACK: "false"
     expose: ["8000"]
@@ -106,6 +108,7 @@ services:
     cpus: 0.25
 
 volumes:
-  postgres-data: {}
+  postgres-data:
+    name: swapkino_postgres-data
   redis-runtime-data: {}
   minio-data: {}
