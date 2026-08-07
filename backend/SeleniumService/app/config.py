@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     selenium_element_timeout_seconds: int = Field(default=20, alias="SELENIUM_ELEMENT_TIMEOUT_SECONDS")
     selenium_max_pages: int = Field(default=100, alias="SELENIUM_MAX_PAGES")
     selenium_max_items: int = Field(default=10_000, alias="SELENIUM_MAX_ITEMS")
+    selenium_max_concurrent: int = Field(default=1, alias="SELENIUM_MAX_CONCURRENT")
     chrome_binary: str = Field(default="", alias="CHROME_BINARY")
     chromedriver_path: str = Field(default="", alias="CHROMEDRIVER_PATH")
     allowed_origins: str = Field(default="", alias="ALLOWED_ORIGINS")

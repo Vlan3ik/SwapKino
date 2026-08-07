@@ -1,4 +1,5 @@
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, status
@@ -13,6 +14,7 @@ from .schemas import RatedItem, RatingsRequest, RatingsResponse
 settings = get_settings()
 logging.basicConfig(level=settings.log_level.upper())
 captcha_sessions = CaptchaSessionStore(ttl_seconds=300)
+selenium_gate = threading.BoundedSemaphore(value=max(1, settings.selenium_max_concurrent))
 
 
 @asynccontextmanager
@@ -65,7 +67,8 @@ def captcha_detail(exc: CaptchaRequiredError, session_id: str | None = None) -> 
 def import_ratings(payload: RatingsRequest) -> RatingsResponse:
     scraper = KinopoiskScraper(settings)
     try:
-        source_url, scraped = scraper.scrape(str(payload.profile_url), payload.include_unrated)
+        with selenium_gate:
+            source_url, scraped = scraper.scrape(str(payload.profile_url), payload.include_unrated)
     except InvalidProfileError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except CaptchaRequiredError as exc:
@@ -105,7 +108,8 @@ def resume_after_captcha(session_id: str) -> RatingsResponse:
 
     scraper = KinopoiskScraper(settings)
     try:
-        scraped = scraper.resume(session.driver, session.source_url, session.include_unrated)
+        with selenium_gate:
+            scraped = scraper.resume(session.driver, session.source_url, session.include_unrated)
     except CaptchaRequiredError as exc:
         # Selenium-контекст остаётся тем же; пользователь может завершить challenge
         # и вызвать resume ещё раз до истечения TTL.
