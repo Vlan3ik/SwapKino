@@ -18,6 +18,7 @@ class RatingsRequest(BaseModel):
 
 
 class RatedItem(BaseModel):
+    external_id: str = Field(..., description="Stable numeric Kinopoisk film/series ID")
     title: str
     year: int | None = None
     genres: str | None = None
@@ -33,4 +34,7 @@ class RatingsResponse(BaseModel):
     total: int
     rated: int
     unrated: int
+    pages_processed: int
+    pages_total: int
+    complete: bool = True
     items: list[RatedItem]

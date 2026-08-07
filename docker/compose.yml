@@ -47,7 +47,7 @@ services:
       REDIS_URL: redis-runtime:6379,abortConnect=false
       REDIS_CACHE_URL: redis-cache:6379,abortConnect=false
       SELENIUM_URL: http://selenium-service:8081
-      CORS_ORIGINS: http://localhost,http://localhost:3000
+      CORS_ORIGINS: http://localhost,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:3000
       CATALOG_WARMUP_PAGES: 50
       CATALOG_TOP_RATED_PAGES: 25
       CATALOG_SYNC_INTERVAL_HOURS: 6

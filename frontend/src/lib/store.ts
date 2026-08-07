@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, getToken, mapApiMovie, setToken } from "@/lib/api";
+import { api, getToken, mapApiMovie, moviePageItems, setToken } from "@/lib/api";
 import type { Movie } from "@/types";
 
 export type View =
@@ -11,7 +11,7 @@ export type View =
   | { name: "license" }
   | { name: "privacy" }
   | { name: "terms" }
-  | { name: "movie"; movieId: number };
+  | { name: "movie"; movieId: number; isSeries?: boolean };
 
 export interface User {
   id: string;
@@ -30,7 +30,7 @@ export function viewPath(view: View): string {
     case "license": return "/license";
     case "privacy": return "/privacy";
     case "terms": return "/terms";
-    case "movie": return `/movie/${view.movieId}`;
+    case "movie": return `/movie/${view.movieId}${view.isSeries ? "?series=1" : ""}`;
   }
 }
 
@@ -38,7 +38,7 @@ export function viewFromLocation(): View {
   if (typeof window === "undefined") return { name: "feed" };
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
   const movieMatch = path.match(/^\/movie\/(\d+)$/);
-  if (movieMatch) return { name: "movie", movieId: Number(movieMatch[1]) };
+  if (movieMatch) return { name: "movie", movieId: Number(movieMatch[1]), isSeries: new URLSearchParams(window.location.search).get("series") === "1" };
   const names: Record<string, View["name"]> = {
     "/catalog": "catalog", "/favorites": "favorites", "/ratings": "ratings",
     "/profile": "profile", "/license": "license", "/privacy": "privacy", "/terms": "terms",
@@ -49,8 +49,8 @@ export function viewFromLocation(): View {
 interface AppState {
   view: View;
   movies: Movie[];
-  favorites: number[];
-  ratings: Record<number, number>;
+  favorites: string[];
+  ratings: Record<string, number>;
   activeReelId: string | null;
   history: View[];
   user: User | null;
@@ -61,23 +61,25 @@ interface AppState {
   catalogTotalPages: number;
   catalogTotalCount: number;
   catalogHasMore: boolean;
+  catalogNextCursor: string | null;
   catalogError: string | null;
   hydrated: boolean;
 
   setView: (view: View) => void;
   goBack: () => void;
-  openMovie: (movieId: number) => void;
-  loadMovie: (movieId: number) => Promise<void>;
+  openMovie: (movieId: number, isSeries?: boolean) => void;
+  loadMovie: (movieId: number, isSeries?: boolean) => Promise<void>;
   syncViewFromUrl: () => void;
   loadMovies: (query?: string) => Promise<void>;
   loadCatalogPage: (page: number, query?: string) => Promise<void>;
   loadMoreMovies: (query?: string) => Promise<boolean>;
   restoreSession: () => Promise<void>;
-  toggleFavorite: (movieId: number) => void;
-  isFavorite: (movieId: number) => boolean;
-  setRating: (movieId: number, rating: number) => void;
-  removeRating: (movieId: number) => void;
-  getRating: (movieId: number) => number | null;
+  refreshLibrary: () => Promise<void>;
+  toggleFavorite: (movieId: number, isSeries?: boolean) => void;
+  isFavorite: (movieId: number, isSeries?: boolean) => boolean;
+  setRating: (movieId: number, rating: number, isSeries?: boolean) => void;
+  removeRating: (movieId: number, isSeries?: boolean) => void;
+  getRating: (movieId: number, isSeries?: boolean) => number | null;
   setActiveReel: (reelId: string | null) => void;
   register: (data: { username: string; email: string; password: string }) => Promise<{ ok: true } | { ok: false; error: string }>;
   login: (identifier: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -88,19 +90,38 @@ function userFromApi(user: { id: string; email: string; displayName?: string | n
   return { id: user.id, email: user.email, username: user.displayName || user.email, createdAt: user.createdAt ? Date.parse(user.createdAt) : Date.now() };
 }
 
-function actionKey(action: string, movieId: number) {
-  return `${action}:${movieId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+export function contentKey(movieId: number, isSeries = false) {
+  return `${isSeries ? "series" : "movie"}:${movieId}`;
 }
 
-async function syncLibrary(set: (partial: Partial<AppState>) => void) {
+export function parseContentKey(key: string) {
+  const [type, rawId] = key.split(":");
+  return { movieId: Number(rawId), isSeries: type === "series" };
+}
+
+function actionKey(action: string, movieId: number, isSeries = false) {
+  return `${action}:${contentKey(movieId, isSeries)}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
+async function syncLibrary(set: (partial: Partial<AppState>) => void, currentMovies: Movie[]) {
   const library = await api.library();
+  const libraryMovies = library.items
+    .map((item) => item.movie)
+    .filter((movie): movie is NonNullable<typeof movie> => Boolean(movie))
+    .map(mapApiMovie);
   set({
-    favorites: library.items.filter((item) => item.action === "favorite").map((item) => item.tmdbId),
-    ratings: Object.fromEntries(library.items.filter((item) => item.action === "rate" && item.value != null).map((item) => [item.tmdbId, item.value as number])),
+    movies: (() => {
+      const merged = new Map(currentMovies.map((movie) => [contentKey(movie.id, movie.type === "series"), movie]));
+      for (const movie of libraryMovies) merged.set(contentKey(movie.id, movie.type === "series"), movie);
+      return [...merged.values()];
+    })(),
+    favorites: library.items.filter((item) => item.favorite ?? item.action === "favorite").map((item) => contentKey(item.tmdbId, item.isSeries)),
+    ratings: Object.fromEntries(library.items.filter((item) => (item.rating ?? item.value) != null && (!item.action || item.action === "rate" || item.action === "rating")).map((item) => [contentKey(item.tmdbId, item.isSeries), (item.rating ?? item.value) as number])),
   });
 }
 
 const INITIAL_CATALOG_PAGES = 3;
+const MAX_RESTORE_PAGES = 20;
 
 export const useAppStore = create<AppState>((set, get) => ({
   view: { name: "feed" },
@@ -117,6 +138,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   catalogTotalPages: 1,
   catalogTotalCount: 0,
   catalogHasMore: true,
+  catalogNextCursor: null,
   catalogError: null,
   hydrated: false,
 
@@ -128,30 +150,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (typeof window !== "undefined" && window.history.length > 1) window.history.back();
     else get().setView({ name: "feed" });
   },
-  openMovie: (movieId) => {
-    const view = { name: "movie", movieId } as const;
+  openMovie: (movieId, isSeries = false) => {
+    const view = { name: "movie", movieId, isSeries } as const;
     if (typeof window !== "undefined") window.history.pushState({}, "", viewPath(view));
     set((state) => ({ view, history: [...state.history, state.view].slice(-20), activeReelId: null }));
   },
-  loadMovie: async (movieId) => {
-    const movie = mapApiMovie(await api.movie(movieId));
-    set((state) => ({ movies: state.movies.some((item) => item.id === movie.id) ? state.movies : [...state.movies, movie] }));
+  loadMovie: async (movieId, isSeries = false) => {
+    const movie = mapApiMovie(await api.movie(movieId, isSeries));
+    const key = contentKey(movie.id, movie.type === "series");
+    set((state) => ({ movies: state.movies.some((item) => contentKey(item.id, item.type === "series") === key) ? state.movies.map((item) => contentKey(item.id, item.type === "series") === key ? movie : item) : [...state.movies, movie] }));
   },
   syncViewFromUrl: () => set({ view: viewFromLocation(), activeReelId: null }),
 
   loadMovies: async (query) => {
     set({ loadingMovies: true, catalogError: null });
     try {
-      const token = get().token;
-      let response = token ? await api.recommendations(1) : await api.movies(1, query);
-      // Новый аккаунт ещё не имеет рекомендаций в PostgreSQL — в этом случае
-      // показываем публичный каталог TMDB, а не локальный фиктивный список.
-      if (token && response.results.length === 0) {
-        response = await api.movies(1, query);
-      }
-      const rows = response.results.map(mapApiMovie);
-      const unique = [...new Map(rows.map((movie) => [movie.id, movie])).values()];
-      set({ movies: unique, catalogPage: 1, catalogTotalPages: "totalPages" in response ? response.totalPages : 1, catalogTotalCount: "totalCount" in response ? response.totalCount : response.results.length, catalogHasMore: "hasNextPage" in response ? response.hasNextPage : response.results.length === 20 });
+      const response = await api.movies({ q: query, limit: 20 });
+      const responseItems = moviePageItems(response);
+      const rows = responseItems.map(mapApiMovie);
+      const unique = [...new Map(rows.map((movie) => [contentKey(movie.id, movie.type === "series"), movie])).values()];
+      set({ movies: unique, catalogPage: 1, catalogTotalPages: response.totalPages ?? 1, catalogTotalCount: response.totalCount, catalogHasMore: Boolean(response.nextCursor), catalogNextCursor: response.nextCursor ?? null });
 
       // Первую карточку показываем сразу, а ещё две страницы спокойно
       // догружаем после отрисовки. Это не блокирует первый экран и сохраняет
@@ -176,10 +194,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadCatalogPage: async (page, query) => {
     set({ loadingMovies: true, catalogError: null });
     try {
-      const response = await api.movies(page, query);
-      const rows = response.results.map(mapApiMovie);
-      const unique = [...new Map(rows.map((movie) => [movie.id, movie])).values()];
-      set({ movies: unique, catalogPage: response.page, catalogTotalPages: response.totalPages, catalogTotalCount: response.totalCount, catalogHasMore: response.hasNextPage });
+      const targetPage = Math.min(MAX_RESTORE_PAGES, Math.max(1, Math.floor(page)));
+      let cursor: string | null = null;
+      let totalCount = 0;
+      let totalPages = 1;
+      let loadedPage = 0;
+      const rows: Movie[] = [];
+      for (let currentPage = 1; currentPage <= targetPage; currentPage += 1) {
+        const response = await api.movies({ cursor, q: query, limit: 20 });
+        rows.push(...moviePageItems(response).map(mapApiMovie));
+        totalCount = response.totalCount;
+        totalPages = response.totalPages ?? totalPages;
+        cursor = response.nextCursor ?? null;
+        loadedPage = currentPage;
+        if (!cursor) break;
+      }
+      const unique = [...new Map(rows.map((movie) => [contentKey(movie.id, movie.type === "series"), movie])).values()];
+      set({ movies: unique, catalogPage: loadedPage, catalogTotalPages: totalPages, catalogTotalCount: totalCount, catalogHasMore: Boolean(cursor), catalogNextCursor: cursor });
     } catch (error) {
       set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить страницу каталога" });
     } finally {
@@ -190,17 +221,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadMoreMovies: async (query) => {
     const state = get();
     if (state.loadingMoreMovies || !state.catalogHasMore) return false;
+    const cursor = state.catalogNextCursor;
+    if (!cursor) return false;
     const page = state.catalogPage + 1;
     set({ loadingMoreMovies: true, catalogError: null });
     try {
-      const response = state.token ? await api.recommendations(page) : await api.movies(page, query);
-      const incoming = response.results.map(mapApiMovie);
-      const known = new Set(get().movies.map((movie) => movie.id));
-      const unique = incoming.filter((movie) => !known.has(movie.id));
+      const response = await api.movies({ cursor, q: query, limit: 20 });
+      const incoming = moviePageItems(response).map(mapApiMovie);
+      const known = new Set(get().movies.map((movie) => contentKey(movie.id, movie.type === "series")));
+      const unique = incoming.filter((movie) => !known.has(contentKey(movie.id, movie.type === "series")));
       set({
         movies: [...get().movies, ...unique],
         catalogPage: page,
-        catalogHasMore: incoming.length > 0,
+        catalogHasMore: Boolean(response.nextCursor),
+        catalogNextCursor: response.nextCursor ?? null,
       });
       return unique.length > 0;
     } catch (error) {
@@ -222,32 +256,43 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const user = await api.me();
       set({ user: userFromApi(user) });
-      await syncLibrary(set);
+      // Сначала загружаем каталог, затем добавляем в него все карточки из
+      // библиотеки пользователя. Иначе loadMovies перезаписывал импортированные
+      // фильмы и на экране оставались только случайные совпадения с каталогом.
+      await get().loadMovies().catch(() => undefined);
+      await syncLibrary(set, get().movies);
     } catch {
       setToken(null);
       set({ token: null, user: null, favorites: [], ratings: {} });
     } finally {
-      await get().loadMovies().catch(() => undefined);
       set({ hydrated: true });
     }
   },
 
-  toggleFavorite: (movieId) => {
-    const favorite = !get().favorites.includes(movieId);
-    set((state) => ({ favorites: favorite ? [...state.favorites, movieId] : state.favorites.filter((id) => id !== movieId) }));
-    if (get().token) void api.action({ tmdbId: movieId, actionType: favorite ? "favorite" : "unfavorite", idempotencyKey: actionKey("favorite", movieId) }).catch(() => undefined);
+  refreshLibrary: async () => {
+    if (!get().token) return;
+    await syncLibrary(set, get().movies);
   },
-  isFavorite: (movieId) => get().favorites.includes(movieId),
-  setRating: (movieId, rating) => {
+
+  toggleFavorite: (movieId, isSeries = false) => {
+    const key = contentKey(movieId, isSeries);
+    const favorite = !get().favorites.includes(key);
+    set((state) => ({ favorites: favorite ? [...state.favorites, key] : state.favorites.filter((id) => id !== key) }));
+    if (get().token) void api.action({ tmdbId: movieId, isSeries, actionType: favorite ? "favorite" : "unfavorite", idempotencyKey: actionKey("favorite", movieId, isSeries) }).catch(() => undefined);
+  },
+  isFavorite: (movieId, isSeries = false) => get().favorites.includes(contentKey(movieId, isSeries)),
+  setRating: (movieId, rating, isSeries = false) => {
     const value = Math.max(1, Math.min(10, Math.round(rating)));
-    set((state) => ({ ratings: { ...state.ratings, [movieId]: value } }));
-    if (get().token) void api.action({ tmdbId: movieId, actionType: "rate", value, idempotencyKey: actionKey("rate", movieId) }).catch(() => undefined);
+    const key = contentKey(movieId, isSeries);
+    set((state) => ({ ratings: { ...state.ratings, [key]: value } }));
+    if (get().token) void api.action({ tmdbId: movieId, isSeries, actionType: "rate", value, idempotencyKey: actionKey("rate", movieId, isSeries) }).catch(() => undefined);
   },
-  removeRating: (movieId) => {
-    set((state) => { const next = { ...state.ratings }; delete next[movieId]; return { ratings: next }; });
-    if (get().token) void api.action({ tmdbId: movieId, actionType: "unrate", idempotencyKey: actionKey("unrate", movieId) }).catch(() => undefined);
+  removeRating: (movieId, isSeries = false) => {
+    const key = contentKey(movieId, isSeries);
+    set((state) => { const next = { ...state.ratings }; delete next[key]; return { ratings: next }; });
+    if (get().token) void api.action({ tmdbId: movieId, isSeries, actionType: "unrate", idempotencyKey: actionKey("unrate", movieId, isSeries) }).catch(() => undefined);
   },
-  getRating: (movieId) => get().ratings[movieId] ?? null,
+  getRating: (movieId, isSeries = false) => get().ratings[contentKey(movieId, isSeries)] ?? null,
   setActiveReel: (reelId) => set({ activeReelId: reelId }),
 
   register: async ({ username, email, password }) => {
@@ -264,8 +309,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const response = await api.login({ email: identifier.trim(), password });
       setToken(response.accessToken);
       set({ token: response.accessToken, user: userFromApi(response.user) });
-      await syncLibrary(set);
       await get().loadMovies();
+      await syncLibrary(set, get().movies);
       return { ok: true };
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Не удалось войти" }; }
   },

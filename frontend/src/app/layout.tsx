@@ -1,12 +1,7 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin", "cyrillic"],
-});
+import { AppShell } from "@/components/common/AppShell";
 
 export const metadata: Metadata = {
   title: "СвайпКино — найди фильм на вечер",
@@ -32,10 +27,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" className="dark" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} antialiased bg-background text-foreground min-h-screen`}
-      >
-        {children}
+      <body className="antialiased bg-background text-foreground min-h-screen">
+        <AppShell>{children}</AppShell>
         <Toaster />
       </body>
     </html>

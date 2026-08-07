@@ -152,6 +152,33 @@ namespace SwapKino.Api.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("SwapKino.Api.Genre", b =>
+                {
+                    b.Property<int>("TmdbId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TmdbId"));
+
+                    b.Property<bool>("IsSeries")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("TmdbId");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
+
+                    b.ToTable("Genres");
+                });
+
             modelBuilder.Entity("SwapKino.Api.ImportItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -161,11 +188,18 @@ namespace SwapKino.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("Genres")
                         .HasColumnType("text");
 
                     b.Property<Guid>("ImportJobId")
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("IsSeries")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Kind")
                         .IsRequired()
@@ -200,7 +234,7 @@ namespace SwapKino.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ImportJobId", "KinopoiskUrl")
+                    b.HasIndex("ImportJobId", "ExternalId")
                         .IsUnique();
 
                     b.HasIndex("ImportJobId", "MatchStatus");
@@ -214,6 +248,9 @@ namespace SwapKino.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<int>("AppliedCount")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Checkpoint")
                         .IsRequired()
                         .HasColumnType("text");
@@ -221,10 +258,32 @@ namespace SwapKino.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("DiscoveredCount")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Error")
                         .HasColumnType("text");
 
+                    b.Property<int?>("EstimatedRemainingSeconds")
+                        .HasColumnType("integer");
+
                     b.Property<int>("ImportedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MatchedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("PagesProcessed")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("PagesTotal")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("PhaseProgress")
                         .HasColumnType("integer");
 
                     b.Property<string>("ProfileUrl")
@@ -238,6 +297,9 @@ namespace SwapKino.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("UnmatchedCount")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -250,7 +312,7 @@ namespace SwapKino.Api.Migrations
 
                     b.HasIndex("UserId", "ProfileUrl")
                         .IsUnique()
-                        .HasFilter("\"Status\" IN ('Queued', 'Running', 'WaitingForUser')");
+                        .HasFilter("\"Status\" IN ('Queued', 'Scraping', 'Matching', 'Applying', 'Running', 'WaitingForUser')");
 
                     b.ToTable("ImportJobs");
                 });
@@ -258,16 +320,25 @@ namespace SwapKino.Api.Migrations
             modelBuilder.Entity("SwapKino.Api.Movie", b =>
                 {
                     b.Property<int>("TmdbId")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("integer");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TmdbId"));
+                    b.Property<bool>("IsSeries")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("BackdropPath")
                         .HasColumnType("text");
 
+                    b.Property<int>("DetailAttemptCount")
+                        .HasColumnType("integer");
+
                     b.Property<string>("DetailsState")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("DetailsUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OriginalLanguage")
                         .HasColumnType("text");
 
                     b.Property<string>("OriginalTitle")
@@ -292,6 +363,12 @@ namespace SwapKino.Api.Migrations
                     b.Property<int?>("RuntimeMinutes")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime>("SummaryUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Tagline")
+                        .HasColumnType("text");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasColumnType("text");
@@ -305,42 +382,29 @@ namespace SwapKino.Api.Migrations
                     b.Property<int>("VoteCount")
                         .HasColumnType("integer");
 
-                    b.HasKey("TmdbId");
+                    b.HasKey("TmdbId", "IsSeries");
+
+                    b.HasIndex("IsSeries", "Popularity", "TmdbId");
 
                     b.ToTable("Movies");
                 });
 
-            modelBuilder.Entity("SwapKino.Api.RefreshSession", b =>
+            modelBuilder.Entity("SwapKino.Api.MovieGenre", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
+                    b.Property<int>("TmdbId")
+                        .HasColumnType("integer");
 
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
+                    b.Property<bool>("IsSeries")
+                        .HasColumnType("boolean");
 
-                    b.Property<DateTime>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone");
+                    b.Property<int>("GenreId")
+                        .HasColumnType("integer");
 
-                    b.Property<DateTime?>("RevokedAt")
-                        .HasColumnType("timestamp with time zone");
+                    b.HasKey("TmdbId", "IsSeries", "GenreId");
 
-                    b.Property<string>("TokenHash")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
+                    b.HasIndex("GenreId");
 
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
-
-                    b.HasIndex("UserId", "ExpiresAt");
-
-                    b.ToTable("RefreshSessions");
+                    b.ToTable("MovieGenres");
                 });
 
             modelBuilder.Entity("SwapKino.Api.OutboxEvent", b =>
@@ -386,6 +450,38 @@ namespace SwapKino.Api.Migrations
                     b.HasIndex("Published");
 
                     b.ToTable("OutboxEvents");
+                });
+
+            modelBuilder.Entity("SwapKino.Api.RefreshSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "ExpiresAt");
+
+                    b.ToTable("RefreshSessions");
                 });
 
             modelBuilder.Entity("SwapKino.Api.User", b =>
@@ -479,6 +575,9 @@ namespace SwapKino.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsSeries")
+                        .HasColumnType("boolean");
+
                     b.Property<int>("TmdbId")
                         .HasColumnType("integer");
 
@@ -493,9 +592,90 @@ namespace SwapKino.Api.Migrations
                     b.HasIndex("UserId", "IdempotencyKey")
                         .IsUnique();
 
-                    b.HasIndex("UserId", "TmdbId");
+                    b.HasIndex("UserId", "TmdbId", "IsSeries");
 
                     b.ToTable("UserActions");
+                });
+
+            modelBuilder.Entity("SwapKino.Api.UserExternalItem", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProfileId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsSeries")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MatchError")
+                        .HasColumnType("text");
+
+                    b.Property<string>("MatchStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<double?>("Rating")
+                        .HasColumnType("double precision");
+
+                    b.Property<int?>("TmdbId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Watched")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("UserId", "Source", "ProfileId", "ExternalId");
+
+                    b.ToTable("UserExternalItems");
+                });
+
+            modelBuilder.Entity("SwapKino.Api.UserMovieState", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("TmdbId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsSeries")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("Favorite")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastImpressionAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("NegativeSignals")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("PositiveSignals")
+                        .HasColumnType("integer");
+
+                    b.Property<double?>("Rating")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime?>("SuppressedUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Watched")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("UserId", "TmdbId", "IsSeries");
+
+                    b.ToTable("UserMovieStates");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
@@ -558,6 +738,25 @@ namespace SwapKino.Api.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("SwapKino.Api.MovieGenre", b =>
+                {
+                    b.HasOne("SwapKino.Api.Genre", "Genre")
+                        .WithMany("MovieGenres")
+                        .HasForeignKey("GenreId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SwapKino.Api.Movie", "Movie")
+                        .WithMany("MovieGenres")
+                        .HasForeignKey("TmdbId", "IsSeries")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Genre");
+
+                    b.Navigation("Movie");
+                });
+
             modelBuilder.Entity("SwapKino.Api.RefreshSession", b =>
                 {
                     b.HasOne("SwapKino.Api.User", null)
@@ -565,6 +764,16 @@ namespace SwapKino.Api.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("SwapKino.Api.Genre", b =>
+                {
+                    b.Navigation("MovieGenres");
+                });
+
+            modelBuilder.Entity("SwapKino.Api.Movie", b =>
+                {
+                    b.Navigation("MovieGenres");
                 });
 #pragma warning restore 612, 618
         }

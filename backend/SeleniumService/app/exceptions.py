@@ -14,6 +14,7 @@ class CaptchaRequiredError(ScraperError):
         driver: object | None = None,
         collected_items: list[object] | None = None,
         page_number: int = 1,
+        pages_total: int | None = None,
     ):
         super().__init__(message)
         self.page_url = page_url
@@ -21,6 +22,7 @@ class CaptchaRequiredError(ScraperError):
         self.driver = driver
         self.collected_items = collected_items or []
         self.page_number = page_number
+        self.pages_total = pages_total
 
 
 class InvalidProfileError(ScraperError):

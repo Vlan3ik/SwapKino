@@ -18,6 +18,7 @@ public sealed class CatalogWarmupService(
             await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
             var target = Math.Clamp(config.GetValue("CATALOG_WARMUP_PAGES", 5), 1, 500);
             await SyncPopular(target, forceRefresh: false, ct: stoppingToken);
+            await SyncSeries(Math.Clamp(config.GetValue("CATALOG_TV_WARMUP_PAGES", target),1,200), forceRefresh:false, ct:stoppingToken);
             var topRatedPages = Math.Clamp(config.GetValue("CATALOG_TOP_RATED_PAGES", 25), 0, 200);
             await SyncTopRated(topRatedPages, ct: stoppingToken);
 
@@ -25,7 +26,7 @@ public sealed class CatalogWarmupService(
             using var timer = new PeriodicTimer(TimeSpan.FromHours(intervalHours));
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                try { await SyncPopular(target, forceRefresh: true, ct: stoppingToken); }
+                try { await SyncPopular(target, forceRefresh: true, ct: stoppingToken); await SyncSeries(Math.Clamp(config.GetValue("CATALOG_TV_WARMUP_PAGES", target),1,200),true,stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
                 catch (Exception ex) { log.LogWarning(ex, "Catalog refresh failed; will retry on the next interval"); }
             }
@@ -39,12 +40,19 @@ public sealed class CatalogWarmupService(
         }
     }
 
+    private async Task SyncSeries(int target,bool forceRefresh,CancellationToken ct)
+    {
+        using var scope=scopes.CreateScope();var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();var tmdb=scope.ServiceProvider.GetRequiredService<TmdbClient>();
+        if(!forceRefresh&&await db.Movies.CountAsync(x=>x.IsSeries,ct)>=target*20)return;
+        for(var page=1;page<=target&&!ct.IsCancellationRequested;page++){await tmdb.Discover(page,null,ct,forceRefresh,"/discover/tv");await Task.Delay(TimeSpan.FromMilliseconds(500),ct);}
+    }
+
     private async Task SyncPopular(int target, bool forceRefresh, CancellationToken ct)
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
         var tmdb = scope.ServiceProvider.GetRequiredService<TmdbClient>();
-        var count = await db.Movies.CountAsync(ct);
+        var count = await db.Movies.CountAsync(x=>!x.IsSeries,ct);
         if (!forceRefresh && count >= target * 20)
         {
             log.LogInformation("Catalog warmup skipped: {Count} movies already cached", count);

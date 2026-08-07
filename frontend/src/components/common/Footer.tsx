@@ -1,12 +1,10 @@
 "use client";
 
 import { Flame, Github, ExternalLink, Heart, FileText, Shield, ScrollText } from "lucide-react";
-import { useAppStore } from "@/lib/store";
 import { motion } from "framer-motion";
+import Link from "next/link";
 
 export function Footer() {
-  const setView = useAppStore((s) => s.setView);
-
   return (
     <footer className="mt-auto border-t border-white/5 bg-background/60 backdrop-blur-sm">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
@@ -14,8 +12,7 @@ export function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
           {/* Описание проекта */}
           <div className="md:col-span-1">
-            <button
-              onClick={() => setView({ name: "feed" })}
+            <Link href="/"
               className="flex items-center gap-2.5 group mb-3"
             >
               <div className="relative">
@@ -28,7 +25,7 @@ export function Footer() {
               <span className="text-lg font-bold tracking-tight">
                 СвайпКино
               </span>
-            </button>
+            </Link>
             <p className="text-sm text-muted-foreground leading-relaxed max-w-sm">
               Бесплатный open-source сервис для поиска фильма на вечер в
               формате свайпов. Без рекламы, без подписок, без трекеров. Сделано
@@ -53,44 +50,39 @@ export function Footer() {
             </h3>
             <ul className="space-y-2 text-sm">
               <li>
-                <button
-                  onClick={() => setView({ name: "feed" })}
+                <Link href="/"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Лента
-                </button>
+                </Link>
               </li>
               <li>
-                <button
-                  onClick={() => setView({ name: "catalog" })}
+                <Link href="/catalog"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Каталог
-                </button>
+                </Link>
               </li>
               <li>
-                <button
-                  onClick={() => setView({ name: "favorites" })}
+                <Link href="/favorites"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Избранное
-                </button>
+                </Link>
               </li>
               <li>
-                <button
-                  onClick={() => setView({ name: "ratings" })}
+                <Link href="/ratings"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Мои оценки
-                </button>
+                </Link>
               </li>
               <li>
-                <button
-                  onClick={() => setView({ name: "profile" })}
+                <Link href="/profile"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Профиль
-                </button>
+                </Link>
               </li>
             </ul>
           </div>
@@ -102,31 +94,28 @@ export function Footer() {
             </h3>
             <ul className="space-y-2 text-sm">
               <li>
-                <button
-                  onClick={() => setView({ name: "license" })}
+                <Link href="/license"
                   className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <ScrollText className="h-3.5 w-3.5" />
                   Лицензия MIT
-                </button>
+                </Link>
               </li>
               <li>
-                <button
-                  onClick={() => setView({ name: "privacy" })}
+                <Link href="/privacy"
                   className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Shield className="h-3.5 w-3.5" />
                   Политика конфиденциальности
-                </button>
+                </Link>
               </li>
               <li>
-                <button
-                  onClick={() => setView({ name: "terms" })}
+                <Link href="/terms"
                   className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <FileText className="h-3.5 w-3.5" />
                   Условия использования
-                </button>
+                </Link>
               </li>
             </ul>
           </div>

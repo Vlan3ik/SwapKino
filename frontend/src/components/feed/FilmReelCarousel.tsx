@@ -1,311 +1,61 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence, PanInfo } from "framer-motion";
-import { ChevronLeft, ChevronRight, Play } from "lucide-react";
-import { filmReels, getReelMovies } from "@/lib/movies";
-import { useAppStore } from "@/lib/store";
-import { cn } from "@/lib/utils";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertCircle, ChevronLeft, ChevronRight, Play, RotateCcw } from "lucide-react";
+import { motion, PanInfo } from "framer-motion";
+import { api, mapApiReel } from "@/lib/api";
 import type { FilmReel } from "@/types";
+import { cn } from "@/lib/utils";
+import { ArtworkImage } from "@/components/common/ArtworkImage";
 
-/**
- * Карусель «Кинопленок» с drag мышью.
- *  - Зацикленная (loop)
- *  - Drag мышью / тачем для листания
- *  - Карточки вытянутые по высоте, минимальный контент: только название + кнопка «Начать ленту»
- *  - Фон карточки — обложка первого фильма
- */
 export function FilmReelCarousel() {
-  const reels = filmReels;
+  const [reels, setReels] = useState<FilmReel[]>([]);
   const [index, setIndex] = useState(0);
-  const { movies: catalog, setActiveReel } = useAppStore();
-  const trackRef = useRef<HTMLDivElement | null>(null);
-  const reelMovies = useMemo(() => {
-    const usedMovies = new Set<number>();
-    const usedCovers = new Set<string>();
-    const result = new Map<string, typeof catalog>();
-
-    for (const reel of reels) {
-      const candidates = getReelMovies(reel, catalog);
-      const cover = candidates.find(
-        (movie) => !usedMovies.has(movie.id) && movie.backdropUrl && !usedCovers.has(movie.backdropUrl)
-      ) ?? catalog.find(
-        (movie) => !usedMovies.has(movie.id) && movie.backdropUrl && !usedCovers.has(movie.backdropUrl)
-      ) ?? candidates.find((movie) => !usedMovies.has(movie.id)) ?? candidates[0];
-      if (cover) {
-        usedMovies.add(cover.id);
-        if (cover.backdropUrl) usedCovers.add(cover.backdropUrl);
-      }
-      result.set(reel.id, cover ? [cover, ...candidates.filter((movie) => movie.id !== cover.id)] : candidates);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
+  const load = useCallback(async () => {
+    const id = ++requestId.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await api.reels();
+      if (id !== requestId.current) return;
+      const rows = Array.isArray(response) ? response : response.items ?? response.results ?? [];
+      setReels(rows.map(mapApiReel));
+      setIndex(0);
+    } catch (cause) {
+      if (id !== requestId.current) return;
+      setReels([]);
+      setError(cause instanceof Error ? cause.message : "Не удалось загрузить киноплёнки");
+    } finally {
+      if (id === requestId.current) setLoading(false);
     }
-    return result;
-  }, [catalog, reels]);
+  }, []);
+  useEffect(() => { void load(); return () => { requestId.current += 1; }; }, [load]);
+  const go = useCallback((direction: number) => setIndex((current) => reels.length ? (current + direction + reels.length) % reels.length : 0), [reels.length]);
+  useEffect(() => { const onKey = (event: KeyboardEvent) => { if (event.key === "ArrowLeft") go(-1); if (event.key === "ArrowRight") go(1); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [go]);
+  const current = reels[index];
+  const cover = current?.coverUrl;
+  const visible = reels.map((item, itemIndex) => { let position = itemIndex - index; if (position > reels.length / 2) position -= reels.length; if (position < -reels.length / 2) position += reels.length; return { item, itemIndex, position }; }).filter(({ position }) => Math.abs(position) <= 2);
 
-  const go = useCallback(
-    (dir: number) => {
-      setIndex((prev) => (prev + dir + reels.length) % reels.length);
-    },
-    [reels.length]
-  );
-
-  const goTo = useCallback(
-    (i: number) => {
-      setIndex(((i % reels.length) + reels.length) % reels.length);
-    },
-    [reels.length]
-  );
-
-  // Клавиатура
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") go(-1);
-      if (e.key === "ArrowRight") go(1);
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [go]);
-
-  // Drag-обработчик для всего трека
-  const onDragEnd = useCallback(
-    (_: unknown, info: PanInfo) => {
-      // порог в пикселях
-      if (info.offset.x < -80) go(1);
-      else if (info.offset.x > 80) go(-1);
-    },
-    [go]
-  );
-
-  const currentReel = reels[index];
-  const firstMovie = reelMovies.get(currentReel.id)?.[0];
-  const visibleReels = useMemo(() => reels.map((reel, i) => {
-    let pos = i - index;
-    if (pos > reels.length / 2) pos -= reels.length;
-    if (pos < -reels.length / 2) pos += reels.length;
-    return { reel, index: i, pos };
-  }).filter(({ pos }) => Math.abs(pos) <= 2), [index, reels]);
-
-  return (
-    <div className="relative w-full">
-      {/* Большой фон от первого фильма в текущей кинопленке */}
-      <AnimatePresence mode="popLayout">
-        <motion.div
-          key={currentReel.id}
-          initial={{ opacity: 0, scale: 1.05 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="absolute inset-0 -z-10 overflow-hidden rounded-3xl"
-        >
-          {firstMovie && (
-            <img
-              src={firstMovie.backdropUrl}
-              alt=""
-              loading="eager"
-              className="w-full h-full object-cover scale-110 blur-md opacity-40"
-            />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/85 to-background" />
-        </motion.div>
-      </AnimatePresence>
-
-      {/* Контейнер карусели */}
-      <div className="relative px-4 sm:px-8 pt-8 pb-10">
-        {/* Заголовок секции + стрелки */}
-        <div className="flex items-center justify-between mb-6 sm:mb-8">
-          <div>
-            <motion.h2
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="text-2xl sm:text-3xl font-bold tracking-tight"
-            >
-              Кинопленки
-            </motion.h2>
-            <motion.p
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.05 }}
-              className="text-sm text-muted-foreground mt-0.5"
-            >
-              Тяни мышью или используй стрелки
-            </motion.p>
-          </div>
-          <div className="flex items-center gap-2">
-            <CarouselArrow direction="left" onClick={() => go(-1)} />
-            <CarouselArrow direction="right" onClick={() => go(1)} />
-          </div>
-        </div>
-
-        {/* Трек с drag */}
-        <motion.div
-          ref={trackRef}
-          drag="x"
-          dragConstraints={{ left: 0, right: 0 }}
-          dragElastic={0.18}
-          onDragEnd={onDragEnd}
-          className="relative h-[480px] sm:h-[560px] flex items-center justify-center cursor-grab active:cursor-grabbing no-select"
-          style={{ perspective: "2000px" }}
-        >
-          {visibleReels.map(({ reel, index: reelIndex, pos }) => {
-            return (
-              <ReelCard
-                key={reel.id}
-                reel={reel}
-                movies={reelMovies.get(reel.id) ?? []}
-                pos={pos}
-                isCenter={pos === 0}
-                onSelect={() => {
-                  if (pos === 0) {
-                    setActiveReel(reel.id);
-                  } else {
-                    goTo(reelIndex);
-                  }
-                }}
-              />
-            );
-          })}
-        </motion.div>
-
-        {/* Прогресс-точки */}
-        <div className="flex items-center justify-center gap-2 mt-6">
-          {reels.map((r, i) => (
-            <button
-              key={r.id}
-              onClick={() => goTo(i)}
-              className={cn(
-                "h-1.5 rounded-full transition-all",
-                i === index
-                  ? "w-10 bg-rating"
-                  : "w-1.5 bg-white/20 hover:bg-white/40"
-              )}
-              aria-label={`Кинопленка: ${r.title}`}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  return <section className="relative overflow-hidden rounded-3xl min-h-[650px]">
+    {cover && <ArtworkImage src={cover} title={current.title} alt="" className="absolute inset-0 -z-10 h-full w-full object-cover opacity-20 blur-xl scale-110"/>}<div className="absolute inset-0 -z-10 bg-gradient-to-b from-background/20 to-background"/>
+    <header className="flex items-end justify-between p-6 sm:p-9"><div><h1 className="text-3xl font-bold">Киноплёнки</h1><p className="text-sm text-muted-foreground mt-1">Выбери настроение, остальное мы соберём сами</p></div>{reels.length > 1 && !loading && !error && <div className="flex gap-2"><Arrow label="Предыдущая" onClick={() => go(-1)}><ChevronLeft/></Arrow><Arrow label="Следующая" onClick={() => go(1)}><ChevronRight/></Arrow></div>}</header>
+    {loading ? <ReelsLoading/> : error ? <ReelsMessage title="Не удалось загрузить киноплёнки" text={error} onRetry={() => void load()}/> : reels.length === 0 ? <ReelsMessage title="Киноплёнок пока нет" text="Подборки ещё не настроены или временно недоступны." onRetry={() => void load()}/> :
+    <motion.div drag="x" dragConstraints={{ left: 0, right: 0 }} dragElastic={0.15} onDragEnd={(_: unknown, info: PanInfo) => { if (info.offset.x < -80) go(1); if (info.offset.x > 80) go(-1); }} className="relative h-[520px] flex items-center justify-center cursor-grab">
+      {visible.map(({ item, itemIndex, position }) => <ReelCard key={item.slug} reel={item} position={position} cover={item.coverUrl} onSide={() => setIndex(itemIndex)}/>) }
+    </motion.div>}
+  </section>;
 }
 
-function CarouselArrow({
-  direction,
-  onClick,
-}: {
-  direction: "left" | "right";
-  onClick: () => void;
-}) {
-  const isLeft = direction === "left";
-  return (
-    <motion.button
-      whileHover={{ scale: 1.05 }}
-      whileTap={{ scale: 0.92 }}
-      onClick={onClick}
-      className={cn(
-        "h-10 w-10 rounded-full flex items-center justify-center",
-        "glass-panel hover:bg-white/10 transition-colors",
-        "border border-white/10"
-      )}
-      aria-label={isLeft ? "Назад" : "Вперёд"}
-    >
-      {isLeft ? (
-        <ChevronLeft className="h-4 w-4" />
-      ) : (
-        <ChevronRight className="h-4 w-4" />
-      )}
-    </motion.button>
-  );
+function ReelCard({ reel, position, cover, onSide }: { reel: FilmReel; position: number; cover: string | null | undefined; onSide: () => void }) {
+  const center = position === 0; const distance = Math.abs(position);
+  return <motion.article animate={{ x: position * 320, rotateY: position * -25, scale: center ? 1 : .78, opacity: 1 - distance * .25, z: -distance * 220 }} transition={{ type: "spring", stiffness: 230, damping: 30 }} style={{ transformStyle: "preserve-3d", zIndex: 20 - distance }} onClick={center ? undefined : onSide} className={cn("absolute h-[470px] w-[310px] sm:w-[380px] rounded-3xl overflow-hidden border border-white/10 shadow-cinematic", !center && "cursor-pointer")}>
+    <ArtworkImage src={cover} title={reel.title} fallbackLabel="Обложка не загружена" alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover"/><div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"/><div className="absolute inset-x-0 bottom-0 p-7"><h2 className="text-3xl font-bold leading-tight">{reel.title}</h2><p className="mt-2 text-sm text-white/70">{reel.subtitle}</p>{center && <Link href={`/reels/${reel.slug}`} className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-black hover:bg-rating"><Play className="h-4 w-4 fill-current"/>Начать ленту</Link>}</div>
+  </motion.article>;
 }
-
-function ReelCard({
-  reel,
-  movies,
-  pos,
-  isCenter,
-  onSelect,
-}: {
-  reel: FilmReel;
-  movies: ReturnType<typeof getReelMovies>;
-  pos: number;
-  isCenter: boolean;
-  onSelect: () => void;
-}) {
-  const bgMovie = movies[0];
-  const absPos = Math.abs(pos);
-
-  // Геометрия: центральный фронтально, боковые уезжают в перспективу
-  const x = pos * 320;
-  const rotateY = pos * -28;
-  const scale = isCenter ? 1 : 0.78 - Math.min(absPos - 1, 2) * 0.06;
-  const z = -absPos * 240;
-  const opacity = absPos > 2 ? 0 : 1 - absPos * 0.22;
-
-  return (
-    <motion.div
-      animate={{
-        x,
-        rotateY,
-        scale,
-        z,
-        opacity,
-      }}
-      transition={{
-        type: "spring",
-        stiffness: 240,
-        damping: 30,
-      }}
-      style={{
-        transformStyle: "preserve-3d",
-        zIndex: 100 - absPos,
-        pointerEvents: absPos > 2 ? "none" : "auto",
-      }}
-      onClick={onSelect}
-      data-reel-id={reel.id}
-      className={cn(
-        "absolute w-[300px] sm:w-[380px] h-[440px] sm:h-[520px]",
-        "rounded-3xl overflow-hidden cursor-pointer",
-        "border border-white/10",
-        "shadow-cinematic",
-        isCenter && "ring-2 ring-rating/40"
-      )}
-    >
-      {/* Фон-обложка первого фильма */}
-      {bgMovie && (
-        <img
-          src={bgMovie.backdropUrl}
-          alt={bgMovie.title}
-          loading={isCenter ? "eager" : "lazy"}
-          className="absolute inset-0 w-full h-full object-cover"
-          draggable={false}
-        />
-      )}
-
-      {/* Градиент-затемнение */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
-      <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-transparent to-transparent" />
-
-      {/* Минимальный контент: только название и кнопка */}
-      <div className="absolute inset-0 p-6 sm:p-8 flex flex-col justify-end">
-        <h3 className="text-3xl sm:text-4xl font-bold text-white leading-tight mb-4 drop-shadow-lg">
-          {reel.title}
-        </h3>
-
-        {isCenter && (
-          <motion.button
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.15 }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect();
-            }}
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.96 }}
-            className="self-start flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black text-sm font-semibold hover:bg-rating transition-colors shadow-cinematic"
-          >
-            <Play className="h-4 w-4" fill="currentColor" />
-            Начать ленту
-          </motion.button>
-        )}
-      </div>
-    </motion.div>
-  );
-}
+function ReelsLoading() { return <div className="relative h-[520px] grid place-items-center" aria-live="polite"><div className="h-[470px] w-[310px] sm:w-[380px] animate-pulse rounded-3xl border border-white/10 bg-gradient-to-br from-white/10 to-white/[0.03]"><div className="mx-7 mt-[350px] h-8 w-2/3 rounded-lg bg-white/10"/><div className="mx-7 mt-3 h-4 w-1/2 rounded bg-white/10"/></div><span className="sr-only">Загружаем киноплёнки…</span></div>; }
+function ReelsMessage({ title, text, onRetry }: { title: string; text: string; onRetry: () => void }) { return <div className="h-[470px] mx-6 grid place-items-center rounded-3xl border border-dashed border-white/15 bg-white/[0.025] text-center"><div className="max-w-md px-6"><AlertCircle className="mx-auto h-10 w-10 text-rating/70"/><h2 className="mt-4 text-xl font-semibold">{title}</h2><p className="mt-2 text-sm text-muted-foreground">{text}</p><button type="button" onClick={onRetry} className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-black hover:bg-rating"><RotateCcw className="h-4 w-4"/>Повторить</button></div></div>; }
+function Arrow({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) { return <button aria-label={label} onClick={onClick} className="h-10 w-10 rounded-full glass-panel grid place-items-center hover:bg-white/10">{children}</button>; }

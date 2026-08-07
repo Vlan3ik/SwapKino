@@ -14,14 +14,18 @@ import {
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { AuthModal } from "./AuthModal";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 
 export function Header() {
-  const { view, setView, favorites, user, logout, ratings } = useAppStore();
+  const { favorites, user, logout, ratings } = useAppStore();
+  const pathname = usePathname();
+  const router = useRouter();
   const [profileOpen, setProfileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
 
-  const activeName = view.name;
+  const activeName = pathname === "/" || pathname.startsWith("/reels/") ? "feed" : pathname.split("/")[1];
   const ratedCount = Object.keys(ratings).length;
 
   const openAuth = (mode: "login" | "register") => {
@@ -36,9 +40,8 @@ export function Header() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
             {/* Лого */}
-            <a
+            <Link
               href="/"
-              onClick={() => setView({ name: "feed" })}
               className="flex items-center gap-2.5 group no-select"
             >
               <motion.div
@@ -57,7 +60,7 @@ export function Header() {
                   СвайпКино
                 </span>
               </div>
-            </a>
+            </Link>
 
             {/* Навигация по центру */}
             <nav className="hidden md:flex items-center gap-1">
@@ -66,14 +69,12 @@ export function Header() {
                 label="Подборки"
                 href="/"
                 active={activeName === "feed"}
-                onClick={() => setView({ name: "feed" })}
               />
               <NavButton
                 icon={<LayoutGrid className="h-4 w-4" />}
                 label="Каталог"
                 href="/catalog"
                 active={activeName === "catalog"}
-                onClick={() => setView({ name: "catalog" })}
               />
             </nav>
 
@@ -133,7 +134,7 @@ export function Header() {
                         icon={<User className="h-4 w-4" />}
                         label="Профиль"
                         onClick={() => {
-                          setView({ name: "profile" });
+                          router.push("/profile");
                           setProfileOpen(false);
                         }}
                       />
@@ -155,7 +156,7 @@ export function Header() {
               <div className="flex items-center gap-1.5">
                 {/* Иконки быстрых разделов для гостя */}
                 <button
-                  onClick={() => setView({ name: "favorites" })}
+                  onClick={() => router.push("/favorites")}
                   aria-label="Избранное"
                   className={cn(
                     "relative h-9 w-9 rounded-full border transition-all flex items-center justify-center",
@@ -172,7 +173,7 @@ export function Header() {
                   )}
                 </button>
                 <button
-                  onClick={() => setView({ name: "ratings" })}
+                  onClick={() => router.push("/ratings")}
                   aria-label="Мои оценки"
                   className={cn(
                     "relative h-9 w-9 rounded-full border transition-all flex items-center justify-center",
@@ -211,14 +212,12 @@ export function Header() {
               label="Подборки"
               href="/"
               active={activeName === "feed"}
-              onClick={() => setView({ name: "feed" })}
             />
             <NavButton
               icon={<LayoutGrid className="h-4 w-4" />}
               label="Каталог"
               href="/catalog"
               active={activeName === "catalog"}
-              onClick={() => setView({ name: "catalog" })}
             />
           </nav>
         </div>
@@ -238,18 +237,15 @@ function NavButton({
   label,
   href,
   active,
-  onClick,
 }: {
   icon: React.ReactNode;
   label: string;
   href: string;
   active: boolean;
-  onClick: () => void;
 }) {
   return (
-    <a
+    <Link
       href={href}
-      onClick={onClick}
       className={cn(
         "flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all relative",
         active
@@ -265,7 +261,7 @@ function NavButton({
           className="absolute -bottom-1 left-3 right-3 h-0.5 bg-rating rounded-full"
         />
       )}
-    </a>
+    </Link>
   );
 }
 

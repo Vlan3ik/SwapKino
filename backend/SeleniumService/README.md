@@ -66,7 +66,7 @@ curl -X POST http://localhost:8081/api/v1/kinopoisk/ratings \
   }'
 ```
 
-Ответ содержит `total`, `rated`, `unrated` и `items`. Каждый элемент содержит `title`, `year`, `genres`, `rating`, `kind`, `kinopoisk_url` и `page`.
+Ответ содержит `total`, `rated`, `unrated`, `pages_processed`, `pages_total`, `complete` и `items`. Каждый элемент содержит стабильный `external_id`, `title`, `year`, `genres`, `rating`, `kind`, `kinopoisk_url` и `page`. Сервис не возвращает тихо обрезанный результ: если пагинация неполна или DOM не распознан, запрос завершается ошибкой.
 
 `include_unrated=false` исключает элементы, у которых `rating=null`.
 

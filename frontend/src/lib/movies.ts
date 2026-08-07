@@ -1,37 +1,55 @@
-import type { FilmReel, Genre, Movie } from "@/types";
+import type { FilmReel, Movie } from "@/types";
 
-// Киноплёнки — это только тематические правила. Фильмы, постеры и описания
-// всегда приходят из ASP.NET API; при нехватке жанра используется общий каталог.
+const reel = (slug: string, title: string, subtitle: string, genres: string[] = [], strategy?: string): FilmReel => ({ id: slug, slug, title, subtitle, genres, strategy });
+
+// Fallback only: production configuration is loaded from GET /reels.
 export const filmReels: FilmReel[] = [
-  { id: "no-sleep-tonight", title: "Ночь без сна", subtitle: "Когда хочется пощекотать нервы", genre: "Ужасы", movieIds: [] },
-  { id: "plot-twist", title: "Поворот сюжета", subtitle: "Триллеры, после которых молчишь", genre: "Триллер", movieIds: [] },
-  { id: "case-files", title: "Дело закрыто", subtitle: "Тайны, улики и неожиданные ответы", genre: "Детектив", movieIds: [] },
-  { id: "dark-side", title: "Тёмная сторона", subtitle: "Криминальные истории без глянца", genre: "Криминал", movieIds: [] },
-  { id: "adrenaline", title: "На предельной скорости", subtitle: "Боевики для тех, кто не любит паузы", genre: "Боевик", movieIds: [] },
-  { id: "great-adventure", title: "Большое приключение", subtitle: "Дорога начинается с первого кадра", genre: "Приключения", movieIds: [] },
-  { id: "other-worlds", title: "Миры за гранью", subtitle: "Фэнтези, где невозможное — норма", genre: "Фэнтези", movieIds: [] },
-  { id: "space-signal", title: "Сигнал из космоса", subtitle: "Будущее, звёзды и чужие цивилизации", genre: "Фантастика", movieIds: [] },
-  { id: "serious-conversation", title: "Разговор по душам", subtitle: "Драмы, которые остаются после титров", genre: "Драма", movieIds: [] },
-  { id: "sparks", title: "Искры между строк", subtitle: "Истории о встречах и чувствах", genre: "Романтика", movieIds: [] },
-  { id: "laugh-out-loud", title: "Смешно и точка", subtitle: "Комедии для перезагрузки", genre: "Комедия", movieIds: [] },
-  { id: "whole-family", title: "Смотреть всей семьёй", subtitle: "Добрые истории для большого дивана", genre: "Семейный", movieIds: [] },
-  { id: "animated-universe", title: "Вселенная на ладони", subtitle: "Анимация, которая не знает границ", genre: "Мультфильмы", movieIds: [] },
-  { id: "pages-of-history", title: "Страницы истории", subtitle: "Прошлое, которое звучит современно", genre: "История", movieIds: [] },
-  { id: "war-and-peace", title: "Война и мир", subtitle: "Большие события и человеческие судьбы", genre: "Военный", movieIds: [] },
-  { id: "music-in-frame", title: "Музыка в кадре", subtitle: "Ритм, сцена и живые эмоции", genre: "Музыка", movieIds: [] },
-  { id: "real-world", title: "Реальный мир", subtitle: "Документальные истории без фильтров", genre: "Документальный", movieIds: [] },
-  { id: "golden-shelf", title: "С золотой полки", subtitle: "Фильмы, которые не стареют", genre: "Драма", movieIds: [] },
-  { id: "late-night-comedy", title: "После полуночи", subtitle: "Странно, смешно и немного безумно", genre: "Комедия", movieIds: [] },
-  { id: "epic-scale", title: "Крупный план", subtitle: "Истории с размахом большого экрана", genre: "Боевик", movieIds: [] },
+  reel("na-odnom-dyhanii", "На одном дыхании", "Затягивает с первых минут", ["Триллер", "Криминал", "Детектив"]),
+  reel("bez-tormozov", "Без тормозов", "Максимум экшена", ["Боевик", "Триллер", "Приключения"]),
+  reel("nervy-na-predele", "Нервы на пределе", "Напряжённое кино", ["Триллер", "Ужасы"]),
+  reel("ne-smotri-odin", "Не смотри один", "Самое страшное", ["Ужасы", "Триллер"]),
+  reel("temnye-dela", "Тёмные дела", "Убийства и расследования", ["Криминал", "Детектив", "Триллер"]),
+  reel("slomay-mne-mozg", "Сломай мне мозг", "Запутанные сюжеты", ["Фантастика", "Триллер", "Детектив"]),
+  reel("v-drugoy-mir", "В другой мир", "Магические миры", ["Фэнтези", "Приключения"]),
+  reel("sredi-zvezd", "Где-то среди звёзд", "Космос и другие планеты", ["Фантастика", "Приключения"]),
+  reel("budushchee-zdes", "Будущее уже здесь", "ИИ, роботы, киберпанк", ["Фантастика", "Триллер"]),
+  reel("konec-sveta", "Конец света", "Апокалипсис и выживание", ["Фантастика", "Ужасы", "Боевик"]),
+  reel("vyzhit-lyuboy-cenoy", "Выжить любой ценой", "Борьба за жизнь", ["Триллер", "Приключения", "Драма"]),
+  reel("voennoe-kino", "Военное кино", "Войны и солдаты", ["Военный", "Драма", "История"]),
+  reel("po-sledam-istorii", "По следам истории", "Реальные исторические эпохи", ["История", "Драма"]),
+  reel("realnye-sobytiya", "Основано на реальных событиях", "Реальные истории", ["Драма", "История", "Криминал"]),
+  reel("velikie-lyudi", "Истории великих людей", "Известные личности", ["Биография", "Драма", "История"]),
+  reel("dikiy-zapad", "Дикий Запад", "Ковбои и фронтир", ["Вестерн", "Драма", "Боевик"]),
+  reel("anime-vecher", "Аниме-вечер", "Полнометражное аниме", ["Анимация", "Фэнтези", "Фантастика"], "anime"),
+  reel("dlya-vsey-semi", "Для всей семьи", "Смотреть вместе", ["Семейный", "Комедия", "Приключения"]),
+  reel("animaciya-vzroslym", "Мультфильмы не только детям", "Сильная взрослая анимация", ["Анимация", "Комедия", "Драма"]),
+  reel("prosto-posmeyatsya", "Просто посмеяться", "Лёгкие комедии", ["Комедия"]),
+  reel("chernyy-yumor", "Чёрный юмор", "Жёсткий и абсурдный юмор", ["Комедия", "Криминал", "Драма"]),
+  reel("hochu-vlyubitsya", "Хочу влюбиться", "Лёгкая романтика", ["Мелодрама", "Комедия"]),
+  reel("lyubov-isportila", "Любовь всё испортила", "Сложные отношения", ["Мелодрама", "Драма"]),
+  reel("poplakat", "Поплакать и отпустить", "Эмоциональное кино", ["Драма", "Мелодрама"]),
+  reel("teplyy-vecher", "Тёплый вечер", "Доброе comfort-кино", ["Комедия", "Семейный", "Драма"]),
+  reel("bolshoe-kino", "Большое кино", "Эпичные блокбастеры", ["Боевик", "Фантастика", "Приключения"]),
+  reel("krasivo", "Красиво до мурашек", "Очень визуальное кино", [], "visual"),
+  reel("muzyka-gromche", "Музыка громче", "Музыканты и музыкальные фильмы", ["Музыка", "Драма", "Комедия"]),
+  reel("sportivnyy-harakter", "Спортивный характер", "Победы и преодоление", ["Спорт", "Драма", "Биография"]),
+  reel("documentaries", "Документалки, которые затягивают", "Интересный нон-фикшн", ["Документальный"]),
+  reel("must-see", "Стоит увидеть каждому", "Признанная классика", [], "classic"),
+  reel("provereno-vremenem", "Проверено временем", "Лучшее старое кино", [], "classic"),
+  reel("trending", "Все сейчас смотрят", "Тренды и популярное", [], "trending"),
+  reel("underrated", "Ты мог это пропустить", "Недооценённые фильмы", [], "underrated"),
+  reel("90-minut", "У меня есть 90 минут", "Хорошие короткие фильмы", [], "short"),
+  reel("mini-serial", "Мини-сериал на выходные", "История на один уикенд", [], "miniseries"),
+  reel("serial-marafon", "Сериальный марафон", "Для тех, кто готов залипнуть", [], "series"),
+  reel("anime-serial", "Аниме-сериал", "Японская анимация по сериям", ["Анимация"], "anime-series"),
+  reel("proverennye-serialy", "Проверенные сериалы", "Лучшее из многосерийного", [], "series-classic"),
 ];
 
-export function getReelMovies(reel: FilmReel, catalog: Movie[]): Movie[] {
-  const matching = catalog.filter((movie) => movie.genres.includes(reel.genre));
+export function getReelMovies(reelConfig: FilmReel, catalog: Movie[]): Movie[] {
+  if (reelConfig.genres.length === 0) return catalog;
+  const wanted = new Set(reelConfig.genres.map((genre) => genre.toLocaleLowerCase("ru")));
+  const matching = catalog.filter((movie) => movie.genres.some((genre) => wanted.has(genre.toLocaleLowerCase("ru"))));
   return matching.length > 0 ? matching : catalog;
 }
 
-export const allGenres: Genre[] = [
-  "Ужасы", "Драма", "Фантастика", "Боевик", "Триллер", "Криминал",
-  "Комедия", "Романтика", "Приключения", "Фэнтези", "Мультфильмы",
-  "Детектив", "Семейный", "История", "Военный", "Музыка", "Документальный",
-];
+export const allGenres = ["Боевик", "Анимация", "Биография", "Вестерн", "Военный", "Детектив", "Документальный", "Драма", "История", "Комедия", "Криминал", "Мелодрама", "Музыка", "Приключения", "Семейный", "Спорт", "Триллер", "Ужасы", "Фантастика", "Фэнтези"];

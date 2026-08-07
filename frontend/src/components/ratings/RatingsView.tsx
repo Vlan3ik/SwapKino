@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Star, Trash2, Play, Clock, ArrowUpDown, Heart } from "lucide-react";
-import { useAppStore } from "@/lib/store";
+import { contentKey, parseContentKey, useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -12,14 +13,18 @@ type SortKey = "rating-desc" | "rating-asc" | "year-desc" | "year-asc" | "title"
 const PAGE_SIZE = 10;
 
 export function RatingsView() {
-  const { movies, ratings, removeRating, openMovie, setView, toggleFavorite, isFavorite } =
+  const router = useRouter();
+  const { movies, ratings, removeRating, toggleFavorite, isFavorite } =
     useAppStore();
   const [sortBy, setSortBy] = useState<SortKey>("rating-desc");
   const [page, setPage] = useState(1);
 
   const ratedEntries = useMemo(() => {
     const arr = Object.entries(ratings)
-      .map(([id, r]) => ({ movie: movies.find((movie) => movie.id === parseInt(id))!, rating: r }))
+      .map(([key, r]) => {
+        const content = parseContentKey(key);
+        return { movie: movies.find((movie) => movie.id === content.movieId && (movie.type === "series") === content.isSeries)!, rating: r };
+      })
       .filter((entry) => entry.movie)
       .filter((e) => e.movie);
     arr.sort((a, b) => {
@@ -29,9 +34,9 @@ export function RatingsView() {
         case "rating-asc":
           return a.rating - b.rating;
         case "year-desc":
-          return b.movie.year - a.movie.year;
+          return (b.movie.year ?? 0) - (a.movie.year ?? 0);
         case "year-asc":
-          return a.movie.year - b.movie.year;
+          return (a.movie.year ?? 0) - (b.movie.year ?? 0);
         case "title":
           return a.movie.title.localeCompare(b.movie.title, "ru");
       }
@@ -52,8 +57,8 @@ export function RatingsView() {
       ? ratedEntries.reduce((s, e) => s + e.rating, 0) / ratedEntries.length
       : 0;
 
-  const handleRemove = (movieId: number, title: string) => {
-    removeRating(movieId);
+  const handleRemove = (movieId: number, isSeries: boolean, title: string) => {
+    removeRating(movieId, isSeries);
     toast.success(`Оценка снята: «${title}»`);
   };
 
@@ -110,13 +115,13 @@ export function RatingsView() {
           </p>
           <div className="flex flex-wrap gap-3 justify-center">
             <button
-              onClick={() => setView({ name: "catalog" })}
+              onClick={() => router.push("/catalog")}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black font-semibold text-sm hover:bg-rating transition-colors"
             >
               Открыть Каталог
             </button>
             <button
-              onClick={() => setView({ name: "feed" })}
+              onClick={() => router.push("/")}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-white/15 hover:bg-white/5 font-semibold text-sm transition-colors"
             >
               Открыть Ленту
@@ -129,25 +134,26 @@ export function RatingsView() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
             {paginated.map((entry, i) => {
               const { movie, rating } = entry;
-              const fav = isFavorite(movie.id);
+              const isSeries = movie.type === "series";
+              const fav = isFavorite(movie.id, isSeries);
               return (
                 <motion.div
-                  key={movie.id}
+                  key={contentKey(movie.id, isSeries)}
                   layout
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ duration: 0.2, delay: i * 0.03 }}
                   className="group cursor-pointer"
-                  onClick={() => openMovie(movie.id)}
+                  onClick={() => router.push(`/movie/${movie.id}${isSeries ? "?series=1" : ""}`)}
                 >
                   <div className="relative aspect-[2/3] rounded-xl overflow-hidden border border-white/10 shadow-card-glow">
-                    <img
+                    {movie.posterUrl && <img
                       src={movie.posterUrl}
                       alt={movie.title}
                       loading="lazy"
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
+                    />}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/30 to-transparent" />
 
                     {/* Оценка пользователя — крупная */}
@@ -170,7 +176,7 @@ export function RatingsView() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleRemove(movie.id, movie.title);
+                        handleRemove(movie.id, isSeries, movie.title);
                       }}
                       className="absolute bottom-2 right-2 h-8 w-8 rounded-full bg-black/70 backdrop-blur text-white hover:bg-skip hover:text-black flex items-center justify-center border border-white/10 transition-colors opacity-0 group-hover:opacity-100"
                       aria-label="Удалить оценку"
@@ -184,19 +190,18 @@ export function RatingsView() {
                         {movie.title}
                       </h3>
                       <div className="flex items-center gap-2 text-[10px] text-white/70">
-                        <span>{movie.year}</span>
-                        <span className="w-1 h-1 rounded-full bg-white/30" />
-                        <span className="flex items-center gap-0.5">
+                        {movie.year && <span>{movie.year}</span>}
+                        {movie.duration && <span className="flex items-center gap-0.5">
                           <Clock className="h-2.5 w-2.5" />
                           {movie.duration < 60
                             ? `${movie.duration}м`
                             : `${Math.floor(movie.duration / 60)}ч`}
-                        </span>
+                        </span>}
                       </div>
 
                       {/* Смотреть + В избранное */}
                       <div className="mt-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <a
+                        {movie.watchUrl && <a
                           href={movie.watchUrl}
                           target="_blank"
                           rel="noopener noreferrer"
@@ -205,11 +210,11 @@ export function RatingsView() {
                         >
                           <Play className="h-2.5 w-2.5" fill="currentColor" />
                           Смотреть
-                        </a>
+                        </a>}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            toggleFavorite(movie.id);
+                            toggleFavorite(movie.id, isSeries);
                           }}
                           className={cn(
                             "h-7 w-7 rounded-full flex items-center justify-center border transition-colors",

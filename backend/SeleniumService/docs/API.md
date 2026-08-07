@@ -29,9 +29,11 @@ Request:
 | `profile_url` | URL | да | Публичная ссылка на профиль Кинопоиска |
 | `include_unrated` | boolean | нет | Возвращать просмотренные элементы без оценки, по умолчанию `true` |
 
-Response `200` содержит `total`, `rated`, `unrated` и массив `items`. Элемент массива имеет поля `title`, `year`, `genres`, `rating`, `kind`, `kinopoisk_url` и `page`.
+Response `200` содержит `total`, `rated`, `unrated`, `pages_processed`, `pages_total`, `complete` и массив `items`. Элемент массива имеет поля `external_id`, `title`, `year`, `genres`, `rating`, `kind`, `kinopoisk_url` и `page`.
 
 `rating` может быть `null`, если произведение просмотрено, но не оценено. `kind` принимает `film` или `series`.
+
+`external_id` — числовой ID из URL Кинопоиска; он не меняется при изменении slug/query ссылки и используется для idempotent upsert. `complete=true` возвращается только после успешной обработки всех обнаруженных страниц.
 
 ## Обработка ошибок
 

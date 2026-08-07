@@ -14,7 +14,7 @@ using System.Security.Cryptography;
 namespace SwapKino.Api;
 [ApiController]
 [Route("api/v1")]
-public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, TmdbClient tmdb, IDistributedCache cache, IHttpClientFactory http) : ControllerBase
+public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IHttpClientFactory http, TmdbClient tmdb) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddHours(2),signingCredentials:creds)); }
@@ -71,76 +71,84 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
     [HttpGet("auth/me")][Authorize]
     public async Task<IActionResult> Me() { var user=await users.FindByIdAsync(UserId.ToString()); return user is null?Unauthorized():Ok(new{id=user.Id,email=user.Email,displayName=user.DisplayName,createdAt=user.CreatedAt}); }
-    [HttpGet("movies")]
-    [AllowAnonymous]
-    public async Task<IActionResult> Movies([FromQuery]int page=1,[FromQuery]string? q=null,CancellationToken ct=default)
+    [HttpGet("movies")][AllowAnonymous]
+    public async Task<IActionResult> Movies([FromQuery]string? cursor=null,[FromQuery]int limit=20,[FromQuery]int page=0,[FromQuery]string? q=null,[FromQuery]string? genreIds=null,[FromQuery]double? minRating=null,[FromQuery]int? yearFrom=null,[FromQuery]int? yearTo=null,[FromQuery]bool? isSeries=null,[FromQuery]string sort="popular",CancellationToken ct=default)
     {
-        if (page < 1 || page > 500) return ValidationProblem("Страница должна быть от 1 до 500");
-        var key = $"movies:v3:{page}:{q?.Trim().ToLowerInvariant() ?? "_"}";
-        var cached = await cache.GetStringAsync(key, ct);
-        if (cached is not null) return Content(cached, "application/json");
-        var tmdbPage = await tmdb.DiscoverPage(page, q, ct);
-        var rows = tmdbPage.Results;
-        var normalizedQuery = q?.Trim();
-        var totalCount = string.IsNullOrWhiteSpace(normalizedQuery) ? await db.Movies.AsNoTracking()
-            .Where(x => string.IsNullOrWhiteSpace(normalizedQuery) || x.Title.ToLower().Contains(normalizedQuery!.ToLower()) || (x.OriginalTitle != null && x.OriginalTitle.ToLower().Contains(normalizedQuery!.ToLower())))
-            .CountAsync(ct) : tmdbPage.TotalResults;
-        var totalPages = string.IsNullOrWhiteSpace(normalizedQuery) ? Math.Max(1, (int)Math.Ceiling(totalCount / 20d)) : tmdbPage.TotalPages;
-        var body = JsonSerializer.Serialize(new { page, pageSize = 20, totalCount, totalPages, hasNextPage = page < totalPages, results = rows.Select(MovieDto.From) });
-        await cache.SetStringAsync(key, body, new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10) }, ct);
-        return Content(body, "application/json");
+        if (limit is < 1 or > 50) return ValidationProblem("Limit должен быть от 1 до 50");
+        var after=ParseCatalogCursor(cursor);if(cursor is not null&&after is null)return ValidationProblem("Некорректный cursor");
+        var genres = (genreIds ?? "").Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(x=>int.TryParse(x,out var id)?id:0).Where(x=>x>0).Distinct().ToArray();
+        var query=db.Movies.AsNoTracking().AsQueryable();
+        if(isSeries is not null)query=query.Where(x=>x.IsSeries==isSeries);
+        if(!string.IsNullOrWhiteSpace(q)){var term=q.Trim().ToLower();query=query.Where(x=>x.Title.ToLower().Contains(term)||(x.OriginalTitle!=null&&x.OriginalTitle.ToLower().Contains(term)));}
+        if(genres.Length>0)query=query.Where(x=>x.MovieGenres.Any(g=>genres.Contains(g.GenreId)));
+        if(minRating is not null)query=query.Where(x=>x.VoteAverage>=minRating&&x.VoteCount>0);
+        if(yearFrom is not null)query=query.Where(x=>x.ReleaseDate!=null&&string.Compare(x.ReleaseDate,yearFrom+"-01-01")>=0);
+        if(yearTo is not null)query=query.Where(x=>x.ReleaseDate!=null&&string.Compare(x.ReleaseDate,yearTo+"-12-31")<=0);
+        var totalCount=await query.CountAsync(ct);
+        if(after is not null)
+        {
+            var a=after;
+            query=sort switch
+            {
+                "rating"=>query.Where(x=>x.VoteAverage<a.Number || x.VoteAverage==a.Number && (x.VoteCount<a.Votes || x.VoteCount==a.Votes && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries))),
+                "newest"=>query.Where(x=>string.Compare(x.ReleaseDate,a.Text)<0 || x.ReleaseDate==a.Text && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries)),
+                "oldest"=>query.Where(x=>string.Compare(x.ReleaseDate,a.Text)>0 || x.ReleaseDate==a.Text && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries)),
+                "title"=>query.Where(x=>string.Compare(x.Title,a.Text)>0 || x.Title==a.Text && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries)),
+                _=>query.Where(x=>x.Popularity<a.Number || x.Popularity==a.Number && (x.VoteCount<a.Votes || x.VoteCount==a.Votes && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries)))
+            };
+        }
+        query=sort switch {"rating"=>query.OrderByDescending(x=>x.VoteAverage).ThenByDescending(x=>x.VoteCount).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries),"newest"=>query.OrderByDescending(x=>x.ReleaseDate).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries),"oldest"=>query.OrderBy(x=>x.ReleaseDate).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries),"title"=>query.OrderBy(x=>x.Title).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries),_=>query.OrderByDescending(x=>x.Popularity).ThenByDescending(x=>x.VoteCount).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries)};
+        var rows=await LightweightMovies(query.Skip(page>1?(page-1)*limit:0).Take(limit+1)).ToListAsync(ct);var hasNext=rows.Count>limit;if(hasNext)rows.RemoveAt(rows.Count-1);
+        var next=hasNext&&rows.Count>0?MakeCatalogCursor(rows[^1],sort):null;
+        var items=rows.Select(MovieDto.Summary).ToArray();
+        return Ok(new{items,totalCount,nextCursor=next,results=items,pageSize=limit});
     }
     [HttpGet("movies/{id:int}")]
     [AllowAnonymous]
-    public async Task<IActionResult> Movie(int id,CancellationToken ct) { var movie=await db.Movies.FindAsync([id],ct); if(movie is null||movie.DetailsState!="ready")movie=await tmdb.Details(id,ct); return Ok(MovieDto.From(movie)); }
+    public async Task<IActionResult> Movie(int id,[FromQuery]bool isSeries=false,CancellationToken ct=default)
+    {
+        var movie=await db.Movies.Include(x=>x.MovieGenres).ThenInclude(x=>x.Genre).SingleOrDefaultAsync(x=>x.TmdbId==id&&x.IsSeries==isSeries,ct);
+        if(movie is null)return NotFound(new{message="Фильм или сериал не найден в каталоге"});
+        if(movie.DetailsState!="ready"||movie.DetailsUpdatedAt<DateTime.UtcNow.AddDays(-30))
+        {
+            try{movie=await tmdb.Details(id,ct,isSeries);}
+            catch(Exception ex)when(ex is HttpRequestException or JsonException)
+            {
+                // Summary всё ещё полезен: карточка покажет доступные данные и
+                // enrichment-service повторит запрос с контролируемым retry.
+            }
+        }
+        return Ok(MovieDto.Details(movie));
+    }
     [HttpGet("recommendations")]
     [Authorize]
     public async Task<IActionResult> Recommendations([FromQuery]int page=1, CancellationToken ct=default)
     {
-        if (page < 1 || page > 500) return ValidationProblem("Страница должна быть от 1 до 500");
-        var excluded = db.UserActions.Where(x => x.UserId == UserId && (x.ActionType == "swipe_left" || x.ActionType == "not_interested" || x.ActionType == "watched")).Select(x => x.TmdbId);
-        var likedIds = await db.UserActions.AsNoTracking().Where(x => x.UserId == UserId && (x.ActionType == "favorite" || (x.ActionType == "rate" && x.Value >= 7))).Select(x => x.TmdbId).Distinct().ToListAsync(ct);
-        var likedPayloads = await db.Movies.AsNoTracking().Where(x => likedIds.Contains(x.TmdbId)).Select(x => x.Payload).ToListAsync(ct);
-        var preferredGenres = likedPayloads.SelectMany(GenresFromPayload).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var candidates = await db.Movies.AsNoTracking().Where(x => !excluded.Contains(x.TmdbId)).ToListAsync(ct);
-        var ranked = candidates
-            .Select(movie => new { movie, score = movie.Popularity * 0.65 + movie.VoteAverage * 3 + GenresFromPayload(movie.Payload).Count(preferredGenres.Contains) * 12 })
-            .OrderByDescending(x => x.score)
-            .ThenByDescending(x => x.movie.VoteCount)
-            .Skip((page - 1) * 20)
-            .Take(20)
-            .Select(x => x.movie)
-            .ToList();
-        if (ranked.Count == 0)
-        {
-            await tmdb.Discover(page, null, ct);
-            candidates = await db.Movies.AsNoTracking().Where(x => !excluded.Contains(x.TmdbId)).ToListAsync(ct);
-            ranked = candidates.Select(movie => new { movie, score = movie.Popularity * 0.65 + movie.VoteAverage * 3 + GenresFromPayload(movie.Payload).Count(preferredGenres.Contains) * 12 }).OrderByDescending(x => x.score).ThenByDescending(x => x.movie.VoteCount).Skip((page - 1) * 20).Take(20).Select(x => x.movie).ToList();
-        }
-        return Ok(new { page, results = ranked.Select(MovieDto.From) });
+        if(page is <1 or >500)return ValidationProblem("Страница должна быть от 1 до 500");
+        var ranked=await RankMovies(UserId,null,(page-1)*20,20,ct);
+        return Ok(new{page,results=ranked.Select(MovieDto.Summary)});
     }
     [HttpPost("actions")]
     [Authorize]
     public async Task<IActionResult> Action(ActionRequest request,CancellationToken ct)
     {
-        var allowed = new[] { "favorite", "unfavorite", "rate", "unrate", "swipe_left", "not_interested", "watched" };
+        var allowed = new[] { "impression", "favorite", "unfavorite", "rate", "rating", "unrate", "swipe_left", "swipe_right", "not_interested", "watched", "unwatched" };
         if (request.TmdbId <= 0 || !allowed.Contains(request.ActionType, StringComparer.Ordinal))
             return ValidationProblem("Некорректный тип действия или идентификатор фильма");
         if (request.IdempotencyKey is null || request.IdempotencyKey.Length is < 1 or > 100)
             return ValidationProblem("IdempotencyKey должен содержать от 1 до 100 символов");
-        if (request.ActionType == "rate" && (request.Value is null || request.Value < 1 || request.Value > 10))
+        if ((request.ActionType is "rate" or "rating") && (request.Value is null || request.Value < 1 || request.Value > 10))
             return ValidationProblem("Оценка должна быть от 1 до 10");
 
         var old = await db.UserActions.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == UserId && x.IdempotencyKey == request.IdempotencyKey, ct);
         if (old is not null) return Ok(new { id = old.Id, duplicate = true });
-        if (!await db.Movies.AnyAsync(x => x.TmdbId == request.TmdbId, ct))
-        {
-            try { await tmdb.Details(request.TmdbId, ct); }
-            catch (HttpRequestException) { return NotFound(new { message = "Фильм TMDB не найден" }); }
-        }
+        if (!await db.Movies.AnyAsync(x => x.TmdbId == request.TmdbId && x.IsSeries == request.IsSeries, ct)) return NotFound(new { message = "Контент не найден в локальном каталоге" });
 
-        var item = new UserAction { UserId = UserId, TmdbId = request.TmdbId, ActionType = request.ActionType, Value = request.Value, IdempotencyKey = request.IdempotencyKey };
+        var item = new UserAction { UserId = UserId, TmdbId = request.TmdbId, IsSeries=request.IsSeries, ActionType = request.ActionType, Value = request.Value, IdempotencyKey = request.IdempotencyKey };
         db.UserActions.Add(item);
+        var state=await db.UserMovieStates.FindAsync([UserId,request.TmdbId,request.IsSeries],ct)??new UserMovieState{UserId=UserId,TmdbId=request.TmdbId,IsSeries=request.IsSeries};
+        switch(request.ActionType){case "favorite":state.Favorite=true;state.PositiveSignals++;break;case "unfavorite":state.Favorite=false;break;case "watched":state.Watched=true;break;case "unwatched":state.Watched=false;break;case "rate":case "rating":state.Rating=request.Value;state.Watched=true;if(request.Value>=7)state.PositiveSignals++;else if(request.Value<=4)state.NegativeSignals++;break;case "unrate":state.Rating=null;break;case "swipe_right":state.Favorite=true;state.PositiveSignals++;break;case "swipe_left":case "not_interested":state.SuppressedUntil=DateTime.UtcNow.AddDays(7);state.NegativeSignals++;break;case "impression":state.LastImpressionAt=DateTime.UtcNow;break;}
+        state.UpdatedAt=DateTime.UtcNow;if(db.Entry(state).State==EntityState.Detached)db.UserMovieStates.Add(state);
         db.OutboxEvents.Add(new OutboxEvent { Topic = "recommendations.action", Payload = JsonSerializer.Serialize(new { userId = UserId, tmdbId = request.TmdbId, action = request.ActionType }) });
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException)
@@ -154,32 +162,70 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     [HttpGet("library")][Authorize]
     public async Task<IActionResult> Library(CancellationToken ct)
     {
-        // Текущее состояние библиотеки вычисляется в PostgreSQL, а не через
-        // загрузку всей истории действий в память приложения.
-        var items = await db.UserActions.FromSqlInterpolated($@"
-            SELECT ""Id"", ""UserId"", ""TmdbId"", ""ActionType"", ""Value"", ""IdempotencyKey"", ""CreatedAt""
-            FROM (
-                SELECT a.*, ROW_NUMBER() OVER (PARTITION BY a.""TmdbId"" ORDER BY a.""CreatedAt"" DESC) AS rn
-                FROM ""UserActions"" a
-                WHERE a.""UserId"" = {UserId}
-            ) latest
-            WHERE latest.rn = 1")
-            .AsNoTracking()
-            .Select(x => new { id = x.Id, tmdbId = x.TmdbId, action = x.ActionType, value = x.Value, createdAt = x.CreatedAt })
-            .ToListAsync(ct);
-        return Ok(new { items });
+        var states=await db.UserMovieStates.AsNoTracking().Where(x=>x.UserId==UserId).OrderByDescending(x=>x.UpdatedAt).ToListAsync(ct);
+        var ids=states.Select(x=>x.TmdbId).Distinct().ToArray();
+        var movies=await LightweightMovies(db.Movies.AsNoTracking().Where(x=>ids.Contains(x.TmdbId))).ToListAsync(ct);
+        return Ok(new{items=states.Select(x=>new{x.TmdbId,x.IsSeries,x.Rating,x.Favorite,x.Watched,x.SuppressedUntil,x.UpdatedAt,movie=movies.Where(m=>m.TmdbId==x.TmdbId&&m.IsSeries==x.IsSeries).Select(MovieDto.Summary).FirstOrDefault()})});
+    }
+    [HttpGet("reels")][AllowAnonymous]
+    public async Task<IActionResult> Reels(CancellationToken ct)
+    {
+        var genreIds=ReelDefinitions.All.SelectMany(x=>x.Genres).Distinct().ToArray();
+        var genres=await db.Genres.AsNoTracking().Where(x=>genreIds.Contains(x.TmdbId)).ToDictionaryAsync(x=>x.TmdbId,ct);
+        // Reels only need summary columns. In particular, never read the potentially
+        // multi-megabyte TMDB Payload for every catalog row.
+        var candidates=await LightweightMovies(db.Movies.AsNoTracking()
+            .Where(x=>x.BackdropPath!=null||x.PosterPath!=null)
+            .OrderByDescending(x=>x.Popularity).ThenByDescending(x=>x.VoteCount).ThenBy(x=>x.TmdbId)
+            .Take(ReelCandidateLimit)).ToListAsync(ct);
+        var assigned=new HashSet<MovieKey>();
+        var items=ReelDefinitions.All.Select(reel=>
+        {
+            var eligible=RankReelCandidates(candidates,reel);
+            var representative=eligible.FirstOrDefault(x=>!assigned.Contains(new MovieKey(x.TmdbId,x.IsSeries)))??eligible.FirstOrDefault();
+            if(representative is not null)assigned.Add(new MovieKey(representative.TmdbId,representative.IsSeries));
+            return ReelMetadata(reel,genres,representative);
+        }).ToArray();
+        return Ok(new{items});
+    }
+
+    [HttpGet("reels/{slug}/feed")][AllowAnonymous]
+    public async Task<IActionResult> ReelFeed(string slug,[FromQuery]string? cursor=null,[FromQuery]int limit=20,CancellationToken ct=default)
+    {
+        if(limit is <1 or >50)return ValidationProblem("Limit должен быть от 1 до 50");
+        var reel=ReelDefinitions.All.FirstOrDefault(x=>x.Slug.Equals(slug,StringComparison.OrdinalIgnoreCase));if(reel is null)return NotFound();
+        var parsed=FeedCursor(cursor);var sessionId=parsed.session??Guid.NewGuid().ToString("N");var offset=parsed.offset;
+        var cacheKey=$"reel:v2:{User.FindFirstValue(ClaimTypes.NameIdentifier)??"guest"}:{slug}:{sessionId}";
+        var cached=await cache.GetStringAsync(cacheKey,ct);List<MovieKey> keys;
+        if(cached is null)
+        {
+            var uid=Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier),out var value)?value:(Guid?)null;
+            var ranked=await RankMovies(uid,reel,0,400,ct);keys=ranked.Select(x=>new MovieKey(x.TmdbId,x.IsSeries)).ToList();
+            await cache.SetStringAsync(cacheKey,JsonSerializer.Serialize(keys),new DistributedCacheEntryOptions{AbsoluteExpirationRelativeToNow=TimeSpan.FromMinutes(30)},ct);
+        }
+        else keys=JsonSerializer.Deserialize<List<MovieKey>>(cached)??[];
+        var selected=keys.Skip(offset).Take(limit).ToArray();var rankedIds=keys.Select(x=>x.TmdbId).Distinct().ToArray();
+        var coverKeys=(await db.Movies.AsNoTracking().Where(x=>rankedIds.Contains(x.TmdbId)&&(x.BackdropPath!=null||x.PosterPath!=null)).Select(x=>new{x.TmdbId,x.IsSeries}).ToListAsync(ct)).Select(x=>new MovieKey(x.TmdbId,x.IsSeries)).ToHashSet();
+        var representativeKey=keys.FirstOrDefault(coverKeys.Contains);
+        var selectedIds=selected.Append(representativeKey).Where(x=>x is not null).Select(x=>x!.TmdbId).Distinct().ToArray();
+        var loaded=await LightweightMovies(db.Movies.AsNoTracking().Where(x=>selectedIds.Contains(x.TmdbId))).ToListAsync(ct);
+        var items=selected.Select(k=>loaded.FirstOrDefault(x=>x.TmdbId==k.TmdbId&&x.IsSeries==k.IsSeries)).Where(x=>x is not null).Select(x=>MovieDto.Summary(x!)).ToArray();
+        var representative=representativeKey is null?null:loaded.FirstOrDefault(x=>x.TmdbId==representativeKey.TmdbId&&x.IsSeries==representativeKey.IsSeries);
+        var genreIds=reel.Genres.Distinct().ToArray();var genres=await db.Genres.AsNoTracking().Where(x=>genreIds.Contains(x.TmdbId)).ToDictionaryAsync(x=>x.TmdbId,ct);
+        var next=offset+selected.Length<keys.Count?MakeFeedCursor(sessionId,offset+selected.Length):null;
+        return Ok(new{reel=ReelMetadata(reel,genres,representative),feedSessionId=sessionId,items,nextCursor=next});
     }
     [HttpPost("imports")][Authorize] public async Task<IActionResult> StartImport(ImportRequest request,CancellationToken ct)
     {
         if (!Uri.TryCreate(request.ProfileUrl, UriKind.Absolute, out var profile) || profile.Scheme != Uri.UriSchemeHttps || !(profile.Host.Equals("kinopoisk.ru", StringComparison.OrdinalIgnoreCase) || profile.Host.EndsWith(".kinopoisk.ru", StringComparison.OrdinalIgnoreCase)))
             return ValidationProblem("Нужна HTTPS-ссылка на профиль kinopoisk.ru");
-        var active = await db.ImportJobs.AsNoTracking().Where(x => x.UserId == UserId && x.ProfileUrl == request.ProfileUrl && (x.Status == "Queued" || x.Status == "Running" || x.Status == "WaitingForUser")).OrderByDescending(x => x.CreatedAt).FirstOrDefaultAsync(ct);
+        var active = await db.ImportJobs.AsNoTracking().Where(x => x.UserId == UserId && x.ProfileUrl == request.ProfileUrl && (x.Status == "Queued" || x.Status == "Running" || x.Status == "Scraping" || x.Status == "Matching" || x.Status == "Applying" || x.Status == "WaitingForUser")).OrderByDescending(x => x.CreatedAt).FirstOrDefaultAsync(ct);
         if (active is not null) return Conflict(new { id = active.Id, status = active.Status, message = "Импорт этого профиля уже выполняется" });
         var job=new ImportJob{UserId=UserId,ProfileUrl=request.ProfileUrl}; db.ImportJobs.Add(job); db.OutboxEvents.Add(new OutboxEvent{Topic="kinopoisk.import",Payload=JsonSerializer.Serialize(new{jobId=job.Id,userId=UserId,profileUrl=request.ProfileUrl})});
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException)
         {
-            var alreadyActive = await db.ImportJobs.AsNoTracking().AnyAsync(x => x.UserId == UserId && x.ProfileUrl == request.ProfileUrl && (x.Status == "Queued" || x.Status == "Running" || x.Status == "WaitingForUser"), ct);
+            var alreadyActive = await db.ImportJobs.AsNoTracking().AnyAsync(x => x.UserId == UserId && x.ProfileUrl == request.ProfileUrl && (x.Status == "Queued" || x.Status == "Running" || x.Status == "Scraping" || x.Status == "Matching" || x.Status == "Applying" || x.Status == "WaitingForUser"), ct);
             if (alreadyActive) return Conflict(new { message = "Импорт этого профиля уже выполняется" });
             throw;
         }
@@ -194,7 +240,16 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             id = j.Id,
             status = j.Status,
             progress = j.Progress,
+            phase = j.Phase,
+            phaseProgress = j.PhaseProgress,
             importedCount = j.ImportedCount,
+            discoveredCount = j.DiscoveredCount,
+            matchedCount = j.MatchedCount,
+            appliedCount = j.AppliedCount,
+            unmatchedCount = j.UnmatchedCount,
+            pagesProcessed = j.PagesProcessed,
+            pagesTotal = j.PagesTotal,
+            estimatedRemainingSeconds = j.EstimatedRemainingSeconds,
             error = j.Error,
             captcha = j.Status == "WaitingForUser" ? TryCaptchaDetail(j.Checkpoint) : null,
             createdAt = j.CreatedAt,
@@ -205,12 +260,22 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     {
         var job = await db.ImportJobs.FirstOrDefaultAsync(x => x.Id == id && x.UserId == UserId, ct);
         if (job is null) return NotFound();
-        if (job.Status != "WaitingForUser") return Conflict(new { message = "Импорт не ожидает прохождения CAPTCHA", status = job.Status });
-        var sessionId = TrySessionId(job.Checkpoint);
-        if (sessionId is null) return Conflict(new { message = "Сессия CAPTCHA недоступна, запустите импорт заново" });
+        if (job.Status == "WaitingForUser")
+        {
+            var sessionId = TrySessionId(job.Checkpoint);
+            if (sessionId is null) return Conflict(new { message = "Сессия CAPTCHA недоступна, запустите импорт заново" });
+            db.OutboxEvents.Add(new OutboxEvent { Topic = "kinopoisk.import.resume", Payload = JsonSerializer.Serialize(new { jobId = job.Id, userId = UserId, profileUrl = job.ProfileUrl, sessionId }) });
+        }
+        else if (job.Status == "Failed")
+        {
+            if (!await db.ImportItems.AsNoTracking().AnyAsync(x => x.ImportJobId == job.Id, ct))
+                return Conflict(new { message = "Нет сохранённых данных для продолжения, запустите импорт заново", status = job.Status });
+            job.Error = null;
+            db.OutboxEvents.Add(new OutboxEvent { Topic = "kinopoisk.import", Payload = JsonSerializer.Serialize(new { jobId = job.Id, userId = UserId, profileUrl = job.ProfileUrl }) });
+        }
+        else return Conflict(new { message = "Этот импорт нельзя продолжить", status = job.Status });
         job.Status = "Queued";
         job.UpdatedAt = DateTime.UtcNow;
-        db.OutboxEvents.Add(new OutboxEvent { Topic = "kinopoisk.import.resume", Payload = JsonSerializer.Serialize(new { jobId = job.Id, userId = UserId, profileUrl = job.ProfileUrl, sessionId }) });
         await db.SaveChangesAsync(ct);
         return Accepted(new { id = job.Id, status = job.Status, progress = job.Progress });
     }
@@ -218,7 +283,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     {
         var job = await db.ImportJobs.FirstOrDefaultAsync(x => x.Id == id && x.UserId == UserId, ct);
         if (job is null) return NotFound();
-        if (job.Status is "Completed" or "Failed" or "Cancelled") return Ok(new { id = job.Id, status = job.Status });
+        if (job.Status is "Completed" or "CompletedWithWarnings" or "Failed" or "Cancelled") return Ok(new { id = job.Id, status = job.Status });
         var sessionId = TrySessionId(job.Checkpoint);
         if (sessionId is not null)
         {
@@ -230,7 +295,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         await db.SaveChangesAsync(ct);
         return Ok(new { id = job.Id, status = job.Status });
     }
-    [HttpGet("imports/{id:guid}/items")][Authorize] public async Task<IActionResult> ImportItems(Guid id, CancellationToken ct) { var owns=await db.ImportJobs.AsNoTracking().AnyAsync(x=>x.Id==id&&x.UserId==UserId,ct); if(!owns)return NotFound(); var items=await db.ImportItems.AsNoTracking().Where(x=>x.ImportJobId==id).OrderBy(x=>x.Id).Select(x=>new{id=x.Id,title=x.Title,year=x.Year,genres=x.Genres,rating=x.Rating,kind=x.Kind,kinopoiskUrl=x.KinopoiskUrl,page=x.Page,matchStatus=x.MatchStatus,tmdbId=x.TmdbId,matchError=x.MatchError}).ToListAsync(ct); return Ok(new{items}); }
+    [HttpGet("imports/{id:guid}/items")][Authorize] public async Task<IActionResult> ImportItems(Guid id, CancellationToken ct) { var owns=await db.ImportJobs.AsNoTracking().AnyAsync(x=>x.Id==id&&x.UserId==UserId,ct); if(!owns)return NotFound(); var items=await db.ImportItems.AsNoTracking().Where(x=>x.ImportJobId==id).OrderBy(x=>x.Id).Select(x=>new{id=x.Id,externalId=x.ExternalId,title=x.Title,year=x.Year,genres=x.Genres,rating=x.Rating,kind=x.Kind,isSeries=x.IsSeries,kinopoiskUrl=x.KinopoiskUrl,page=x.Page,matchStatus=x.MatchStatus,tmdbId=x.TmdbId,matchError=x.MatchError}).ToListAsync(ct); return Ok(new{items}); }
     private static string? TrySessionId(string checkpoint)
     {
         try
@@ -267,6 +332,74 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         }
         catch (JsonException) { return null; }
     }
+    private async Task<List<Movie>> RankMovies(Guid? userId, ReelDefinition? reel, int skip, int take, CancellationToken ct)
+    {
+        var now=DateTime.UtcNow;
+        var states=userId is null?[]:await db.UserMovieStates.AsNoTracking().Where(x=>x.UserId==userId)
+            .OrderByDescending(x=>x.UpdatedAt).Take(RankingCandidateLimit).ToListAsync(ct);
+        var excluded=states.Where(x=>x.Watched||x.Rating!=null||x.SuppressedUntil>now).Select(x=>(x.TmdbId,x.IsSeries)).ToHashSet();
+        var positive=states.Where(x=>x.Favorite||x.Rating>=7||x.PositiveSignals>0).ToArray();
+        var positiveIds=positive.Select(x=>x.TmdbId).Distinct().ToArray();
+        var liked=await LightweightMovies(db.Movies.AsNoTracking().Where(x=>positiveIds.Contains(x.TmdbId))).ToListAsync(ct);
+        var lifetime=liked.SelectMany(x=>x.MovieGenres.Select(g=>g.GenreId)).GroupBy(x=>x).ToDictionary(x=>x.Key,x=>(double)x.Count());
+        var recent=liked.SelectMany(movie=>
+        {
+            var state=positive.Where(x=>x.TmdbId==movie.TmdbId&&x.IsSeries==movie.IsSeries).OrderByDescending(x=>x.UpdatedAt).FirstOrDefault();
+            var weight=state is null?0:Math.Pow(.5,Math.Max(0,(now-state.UpdatedAt).TotalDays)/30d);
+            return movie.MovieGenres.Select(g=>(g.GenreId,weight));
+        }).GroupBy(x=>x.GenreId).ToDictionary(x=>x.Key,x=>x.Sum(v=>v.weight));
+        var query=db.Movies.AsNoTracking().AsQueryable();
+        if(reel?.IsSeries is not null)query=query.Where(x=>x.IsSeries==reel.IsSeries);
+        if(reel is not null&&reel.Genres.Length>0)query=query.Where(x=>x.MovieGenres.Any(g=>reel.Genres.Contains(g.GenreId)));
+        if(reel?.MaxRuntime is not null)query=query.Where(x=>x.RuntimeMinutes!=null&&x.RuntimeMinutes<=reel.MaxRuntime);
+        if(reel?.YearBefore is not null)query=query.Where(x=>x.ReleaseDate!=null&&string.Compare(x.ReleaseDate,reel.YearBefore+"-12-31")<=0);
+        // Taste scoring is completed in memory, but only over a bounded, lightweight
+        // server-side candidate pool. This keeps recommendations stable under large
+        // detail payloads and prevents a single request from reading the whole table.
+        var poolSize=Math.Min(RankingCandidateLimit,Math.Max(500,skip+take*10));
+        var candidates=await LightweightMovies(query.OrderByDescending(x=>x.Popularity)
+            .ThenByDescending(x=>x.VoteCount).ThenBy(x=>x.TmdbId).Take(poolSize)).ToListAsync(ct);
+        double Taste(Movie m,Dictionary<int,double> profile)=>m.MovieGenres.Sum(x=>profile.GetValueOrDefault(x.GenreId));
+        double Theme(Movie m)=>reel?.Strategy switch{"classic"=>(m.ReleaseDate is not null&&string.Compare(m.ReleaseDate,"2000-01-01")<0?25:0)+m.VoteAverage*3,"trending"=>m.Popularity*1.2,"underrated"=>m.VoteAverage*5-Math.Log10(Math.Max(10,m.VoteCount))*3,"visual"=>m.BackdropPath is null?0:20,"short"=>m.RuntimeMinutes is >0 and <=100?25:0,_=>reel is null?0:15};
+        // Deterministic 10% exploration is mixed into each snapshot while the rest uses 70/30 lifetime/recent taste.
+        return candidates.Where(x=>!excluded.Contains((x.TmdbId,x.IsSeries))).Select(x=>new{x,score=x.Popularity*.25+x.VoteAverage*2+Theme(x)+.7*Taste(x,lifetime)+.3*Taste(x,recent),explore=Math.Abs(HashCode.Combine(x.TmdbId,x.IsSeries))%10==0}).OrderByDescending(x=>x.explore).ThenByDescending(x=>x.score).ThenByDescending(x=>x.x.VoteCount).ThenBy(x=>x.x.TmdbId).Select(x=>x.x).Skip(skip).Take(take).ToList();
+    }
+    private static List<Movie> RankReelCandidates(IEnumerable<Movie> movies,ReelDefinition reel)
+    {
+        double Theme(Movie m)=>reel.Strategy switch{"classic"=>(m.ReleaseDate is not null&&string.Compare(m.ReleaseDate,"2000-01-01")<0?25:0)+m.VoteAverage*3,"trending"=>m.Popularity*1.2,"underrated"=>m.VoteAverage*5-Math.Log10(Math.Max(10,m.VoteCount))*3,"visual"=>m.BackdropPath is null?0:20,"short"=>m.RuntimeMinutes is >0 and <=100?25:0,_=>15};
+        return movies.Where(m=>(reel.IsSeries is null||m.IsSeries==reel.IsSeries)
+                &&(reel.Genres.Length==0||m.MovieGenres.Any(g=>reel.Genres.Contains(g.GenreId)))
+                &&(reel.MaxRuntime is null||m.RuntimeMinutes is not null&&m.RuntimeMinutes<=reel.MaxRuntime)
+                &&(reel.YearBefore is null||m.ReleaseDate is not null&&string.Compare(m.ReleaseDate,reel.YearBefore+"-12-31")<=0))
+            .OrderByDescending(m=>m.Popularity*.25+m.VoteAverage*2+Theme(m)).ThenByDescending(m=>m.VoteCount).ThenBy(m=>m.TmdbId).ToList();
+    }
+    private const int ReelCandidateLimit=5000;
+    private const int RankingCandidateLimit=5000;
+    private static IQueryable<Movie> LightweightMovies(IQueryable<Movie> query)=>query.Select(movie=>new Movie
+    {
+        TmdbId=movie.TmdbId,IsSeries=movie.IsSeries,Title=movie.Title,OriginalTitle=movie.OriginalTitle,
+        Tagline=movie.Tagline,Overview=movie.Overview,ReleaseDate=movie.ReleaseDate,
+        RuntimeMinutes=movie.RuntimeMinutes,VoteAverage=movie.VoteAverage,VoteCount=movie.VoteCount,
+        Popularity=movie.Popularity,PosterPath=movie.PosterPath,BackdropPath=movie.BackdropPath,
+        DetailsState=movie.DetailsState,
+        MovieGenres=movie.MovieGenres.Select(link=>new MovieGenre
+        {
+            TmdbId=link.TmdbId,IsSeries=link.IsSeries,GenreId=link.GenreId,
+            Genre=new Genre{TmdbId=link.Genre.TmdbId,Slug=link.Genre.Slug,Name=link.Genre.Name,IsSeries=link.Genre.IsSeries}
+        }).ToList()
+    });
+    private static object ReelMetadata(ReelDefinition reel,IReadOnlyDictionary<int,Genre> genres,Movie? representative)=>new
+    {
+        reel.Slug,reel.Title,reel.Description,reel.Strategy,isSeries=reel.IsSeries,
+        genres=reel.Genres.Distinct().Where(genres.ContainsKey).Select(id=>genres[id]).Select(x=>new GenreDto(x.TmdbId,x.Slug,x.Name)).ToArray(),
+        coverUrl=representative is null?null:MovieCover(representative),
+        representativeMovie=representative is null?null:MovieDto.Summary(representative)
+    };
+    private static string? MovieCover(Movie movie)=>!string.IsNullOrWhiteSpace(movie.BackdropPath)?$"https://image.tmdb.org/t/p/original{movie.BackdropPath}":!string.IsNullOrWhiteSpace(movie.PosterPath)?$"https://image.tmdb.org/t/p/w500{movie.PosterPath}":null;
+    private static string MakeCatalogCursor(Movie movie,string sort){var value=sort switch{"rating"=>movie.VoteAverage,"popular"=>movie.Popularity,_=>0};var text=sort switch{"title"=>movie.Title,"newest" or "oldest"=>movie.ReleaseDate,_=>null};return Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new CatalogCursor(value,movie.VoteCount,text,movie.TmdbId,movie.IsSeries))));}
+    private static CatalogCursor? ParseCatalogCursor(string? cursor){if(string.IsNullOrWhiteSpace(cursor))return null;try{return JsonSerializer.Deserialize<CatalogCursor>(Encoding.UTF8.GetString(Convert.FromBase64String(cursor)));}catch{return null;}}
+    private static string MakeFeedCursor(string session,int offset)=>Convert.ToBase64String(Encoding.UTF8.GetBytes($"{session}:{offset}"));
+    private static (string? session,int offset) FeedCursor(string? cursor){if(string.IsNullOrWhiteSpace(cursor))return(null,0);try{var p=Encoding.UTF8.GetString(Convert.FromBase64String(cursor)).Split(':');return p.Length==2&&(int.TryParse(p[1],out var n))?(p[0],n):(null,-1);}catch{return(null,-1);}}
     private static IEnumerable<string> GenresFromPayload(string payload)
     {
         try
@@ -281,4 +414,15 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         return Array.Empty<string>();
     }
 }
-public sealed record RegisterRequest(string Email,string Password,string? DisplayName); public sealed record LoginRequest(string Email,string Password); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey); public sealed record ImportRequest(string ProfileUrl);
+public sealed record RegisterRequest(string Email,string Password,string? DisplayName); public sealed record LoginRequest(string Email,string Password); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey,bool IsSeries=false); public sealed record ImportRequest(string ProfileUrl);
+public sealed record MovieKey(int TmdbId,bool IsSeries);
+public sealed record CatalogCursor(double Number,int Votes,string? Text,int Id,bool IsSeries);
+public sealed record ReelDefinition(string Slug,string Title,string Description,int[] Genres,string Strategy="genres",bool? IsSeries=false,int? MaxRuntime=null,int? YearBefore=null);
+public static class ReelDefinitions
+{
+    public static readonly ReelDefinition[] All=
+    [
+        R("na-odnom-dyhanii","На одном дыхании","Затягивает с первых минут",53,80,9648),R("bez-tormozov","Без тормозов","Максимум экшена",28,53,12),R("nervy-na-predele","Нервы на пределе","Напряжённое кино",53,27),R("ne-smotri-odin","Не смотри один","Самое страшное",27,53),R("temnye-dela","Тёмные дела","Убийства и расследования",80,9648,53),R("slomai-mne-mozg","Сломай мне мозг","Запутанные сюжеты",878,53,9648),R("v-drugoi-mir","В другой мир","Магические миры",14,12),R("sredi-zvezd","Где-то среди звёзд","Космос и другие планеты",878,12),R("buduschee-zdes","Будущее уже здесь","ИИ, роботы, киберпанк",878,53),R("konec-sveta","Конец света","Апокалипсис и выживание",878,27,28),R("vyzhit","Выжить любой ценой","Борьба за жизнь",53,12,18),R("voennoe-kino","Военное кино","Войны и солдаты",10752,18,36),R("po-sledam-istorii","По следам истории","Реальные исторические эпохи",36,18),R("realnye-sobytiya","Основано на реальных событиях","Реальные истории",18,36,80),R("velikie-lyudi","Истории великих людей","Известные личности",18,36),R("dikii-zapad","Дикий Запад","Ковбои и фронтир",37,18,28),R("anime-vecher","Аниме-вечер","Полнометражное аниме",16,14,878),R("dlya-semi","Для всей семьи","Смотреть вместе",10751,35,12),R("animaciya-vzroslym","Мультфильмы не только детям","Сильная взрослая анимация",16,35,18),R("posmeyatsya","Просто посмеяться","Лёгкие комедии",35),R("chernyi-yumor","Чёрный юмор","Жёсткий и абсурдный юмор",35,80,18),R("hochu-vlubitsya","Хочу влюбиться","Лёгкая романтика",10749,35),R("lubov-isportila","Любовь всё испортила","Сложные отношения",10749,18),R("poplakat","Поплакать и отпустить","Эмоциональное кино",18,10749),R("teplyi-vecher","Тёплый вечер","Доброе comfort-кино",35,10751,18),R("bolshoe-kino","Большое кино","Эпичные блокбастеры",28,878,12),new("krasivo","Красиво до мурашек","Очень визуальное кино",[],"visual"),R("muzyka-gromche","Музыка громче","Музыканты и музыкальные фильмы",10402,18,35),R("sport","Спортивный характер","Победы и преодоление",18),R("documentary","Документалки, которые затягивают","Интересный нон-фикшн",99),new("must-see","Стоит увидеть каждому","Признанная классика",[],"classic"),new("provereno-vremenem","Проверено временем","Лучшее старое кино",[],"classic",false,null,2005),new("trending","Все сейчас смотрят","Тренды и популярное",[],"trending"),new("underrated","Ты мог это пропустить","Недооценённые фильмы",[],"underrated"),new("90-minut","У меня есть 90 минут","Хорошие короткие фильмы",[],"short",false,100),new("mini-serial","Мини-сериал на выходные","Короткие истории",[],"trending",true),new("serial-marafon","Сериальный марафон","Истории надолго",[],"popular",true),new("anime-serial","Аниме-сериал","Японская анимация",[16],"genres",true),new("serial-classic","Проверенные сериалы","Лучшее из сериалов",[],"classic",true)
+    ];
+    private static ReelDefinition R(string slug,string title,string description,params int[] genres)=>new(slug,title,description,genres);
+}

@@ -1,390 +1,78 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
-import { motion, useMotionValue, useTransform, PanInfo } from "framer-motion";
-import { Heart, X, Info, Star, Clock, ChevronLeft } from "lucide-react";
-import { useAppStore } from "@/lib/store";
-import { api, getToken } from "@/lib/api";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronLeft, Clock, Heart, Info, Star, X } from "lucide-react";
+import { motion, PanInfo, useMotionValue, useTransform } from "framer-motion";
+import { api, getToken, mapApiMovie, mapApiReel } from "@/lib/api";
 import { filmReels, getReelMovies } from "@/lib/movies";
+import { useAppStore } from "@/lib/store";
+import type { FilmReel, Movie } from "@/types";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-interface SwipeDeckProps {
-  reelId: string;
-  onExit: () => void;
-}
-
-export function SwipeDeck({ reelId, onExit }: SwipeDeckProps) {
-  const reel = filmReels.find((r) => r.id === reelId);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const { movies: catalog, openMovie, toggleFavorite, isFavorite, loadMoreMovies, loadingMoreMovies, catalogHasMore } = useAppStore();
-  const movies = useMemo(() => {
-    if (!reel) return [];
-    return getReelMovies(reel, catalog);
-  }, [catalog, reel]);
+export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => void }) {
+  const catalog = useAppStore((state) => state.movies);
+  const fallbackReel = filmReels.find((item) => item.slug === reelId || item.id === reelId);
+  const [reel, setReel] = useState<FilmReel | undefined>(fallbackReel);
+  const [movies, setMovies] = useState<Movie[]>(fallbackReel ? getReelMovies(fallbackReel, catalog) : []);
+  const [index, setIndex] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [committing, setCommitting] = useState<"left" | "right" | null>(null);
+  const isFavorite = useAppStore((state) => state.isFavorite);
+  const toggleFavorite = useAppStore((state) => state.toggleFavorite);
 
   useEffect(() => {
-    if (currentIndex < Math.max(0, movies.length - 3) || loadingMoreMovies || !catalogHasMore) return;
-    void loadMoreMovies();
-  }, [currentIndex, movies.length, loadingMoreMovies, catalogHasMore, loadMoreMovies]);
+    let active = true; setLoading(true);
+    api.reelFeed(reelId).then((response) => { if (!active) return; const mapped = (response.items ?? response.results ?? []).map(mapApiMovie); setReel(mapApiReel(response.reel)); setMovies(mapped); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active && fallbackReel) setMovies(getReelMovies(fallbackReel, catalog)); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [reelId]);
 
-  const handleSwipe = useCallback(
-    (dir: "left" | "right") => {
-      const movie = movies[currentIndex];
-      if (!movie) return;
-      if (dir === "right") {
-        if (!isFavorite(movie.id)) {
-          toggleFavorite(movie.id);
-          toast.success(`«${movie.title}» в избранном`, {
-            description: "Можно посмотреть в разделе «Избранное»",
-          });
-        }
-      }
-      if (dir === "left" && getToken()) {
-        void api.action({ tmdbId: movie.id, actionType: "swipe_left", idempotencyKey: `swipe-left:${movie.id}:${Date.now()}` }).catch(() => undefined);
-      }
-      setCurrentIndex((i) => i + 1);
-    },
-    [currentIndex, movies, isFavorite, toggleFavorite]
-  );
+  const current = movies[index];
+  const commit = useCallback((direction: "left" | "right") => {
+    if (!current || committing) return;
+    setCommitting(direction);
+    if (getToken()) void api.action({ tmdbId: current.id, isSeries: current.type === "series", actionType: direction === "right" ? "swipe_right" : "swipe_left", idempotencyKey: `swipe:${current.type}:${current.id}:${Date.now()}` }).catch(() => undefined);
+    if (direction === "right" && !isFavorite(current.id, current.type === "series")) { toggleFavorite(current.id, current.type === "series"); toast.success(`«${current.title}» в избранном`); }
+    window.setTimeout(() => { setIndex((value) => value + 1); setCommitting(null); }, 260);
+  }, [current, committing, isFavorite, toggleFavorite]);
 
-  const onDragEnd = useCallback(
-    (_: unknown, info: PanInfo) => {
-      const threshold = 100;
-      if (info.offset.x > threshold) {
-        handleSwipe("right");
-      } else if (info.offset.x < -threshold) {
-        handleSwipe("left");
-      }
-    },
-    [handleSwipe]
-  );
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "ArrowLeft") commit("left"); if (event.key === "ArrowRight") commit("right"); };
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  }, [commit]);
 
-  if (!reel || movies.length === 0) {
-    return (
-      <div className="text-center py-20 text-muted-foreground">
-        Кинопленка пуста
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (index < movies.length - 4 || !nextCursor) return;
+    const cursor = nextCursor; setNextCursor(null);
+    void api.reelFeed(reelId, cursor).then((response) => { const incoming = (response.items ?? response.results ?? []).map(mapApiMovie); setMovies((rows) => merge(rows, incoming)); setNextCursor(response.nextCursor ?? null); });
+  }, [index, movies.length, nextCursor, reelId]);
 
-  // Конец ленты
-  if (currentIndex >= movies.length && loadingMoreMovies) {
-    return <div className="text-center py-20 text-muted-foreground">Подгружаем следующую партию фильмов…</div>;
-  }
-
-  if (currentIndex >= movies.length) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col items-center justify-center py-20 gap-4"
-      >
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 200, damping: 15 }}
-          className="text-6xl"
-        >
-          🎬
-        </motion.div>
-        <h3 className="text-2xl font-bold">Лента закончилась</h3>
-        <p className="text-muted-foreground text-center max-w-md">
-          Ты посмотрел все фильмы в подборке «{reel.title}». Выбери другую
-          кинопленку или загляни в каталог.
-        </p>
-        <div className="flex gap-3 mt-2">
-          <button
-            onClick={() => setCurrentIndex(0)}
-            className="px-5 py-2.5 rounded-full bg-white text-black font-semibold text-sm hover:bg-rating transition-colors"
-          >
-            Сначала
-          </button>
-          <button
-            onClick={onExit}
-            className="px-5 py-2.5 rounded-full border border-white/15 hover:bg-white/5 font-semibold text-sm transition-colors"
-          >
-            К кинопленкам
-          </button>
-        </div>
-      </motion.div>
-    );
-  }
-
-  const current = movies[currentIndex];
-  const next = movies[currentIndex + 1];
-  const after = movies[currentIndex + 2];
-
-  return (
-    <div className="relative">
-      {/* Полноэкранный анимированный бэкдроп на весь main */}
-      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-        <div key={current.id} className="absolute inset-0 opacity-60 transition-opacity duration-700">
-          <img
-            src={current.backdropUrl}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover scale-105"
-            loading="eager"
-            draggable={false}
-          />
-        </div>
-        {/* Затемнение для читаемости контента */}
-        <div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/55 to-background/90" />
-        <div className="absolute inset-0 backdrop-blur-[2px]" />
-      </div>
-
-      {/* Контент поверх бэкдропа */}
-      <div className="relative z-10">
-        {/* Кнопка выхода — минимальная */}
-        <div className="flex justify-center mb-4">
-          <button
-            onClick={onExit}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-            К кинопленкам
-          </button>
-        </div>
-
-        {/* Дек свайпа — высота адаптивная, чтобы карточка занимала максимум
-            доступного места, но не выходила за 620px на больших экранах.
-            ~260px = Header(64-100 на mobile) + FeedView padding(48)
-                    + кнопка выхода(40) + кнопки действий(88) + buffer */}
-        <div className="relative mx-auto max-w-md h-[min(620px,calc(100vh-260px))] min-h-[420px]">
-          {/* Деки под верхним */}
-          {after && (
-            <DeckCardLayer
-              movie={after}
-              className="absolute inset-0 scale-90 opacity-30 blur-[1px]"
-            />
-          )}
-          {next && (
-            <DeckCardLayer
-              movie={next}
-              className="absolute inset-0 scale-95 opacity-60"
-            />
-          )}
-
-          {/* Верхняя карта */}
-          <SwipeCard
-            key={current.id}
-            movie={current}
-            onDragEnd={onDragEnd}
-            onSwipe={handleSwipe}
-            onOpen={() => openMovie(current.id)}
-            isFav={isFavorite(current.id)}
-          />
-        </div>
-
-        {/* Кнопки действий */}
-        <div className="flex items-center justify-center gap-4 mt-6">
-          <ActionButton
-            variant="skip"
-            onClick={() => handleSwipe("left")}
-            icon={<X className="h-7 w-7" />}
-          />
-          <ActionButton
-            variant="info"
-            onClick={() => current && openMovie(current.id)}
-            icon={<Info className="h-5 w-5" />}
-          />
-          <ActionButton
-            variant="like"
-            onClick={() => handleSwipe("right")}
-            icon={<Heart className="h-7 w-7" />}
-          />
-        </div>
-      </div>
+  if (loading && !current) return <Status text="Собираем персональную киноплёнку…"/>;
+  if (!reel || !current) return <Status text={index ? "Киноплёнка закончилась" : "В этой киноплёнке пока нет фильмов"} back/>;
+  return <div className="relative">
+    {current.backdropUrl && <div className="fixed inset-0 pointer-events-none"><img key={`${current.type}:${current.id}`} src={current.backdropUrl} alt="" className="h-full w-full object-cover opacity-45"/><div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/60 to-background"/></div>}
+    <div className="relative z-10"><div className="flex items-center justify-between mb-4"><Link href="/" onClick={onExit} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-white"><ChevronLeft className="h-4 w-4"/>К киноплёнкам</Link><div className="text-right"><h1 className="font-semibold">{reel.title}</h1><p className="text-xs text-muted-foreground">{reel.subtitle}</p></div></div>
+      <div className="relative mx-auto max-w-md h-[min(620px,calc(100vh-260px))] min-h-[430px]">{movies[index + 2] && <Layer movie={movies[index + 2]} className="scale-90 opacity-30"/>}{movies[index + 1] && <Layer movie={movies[index + 1]} className="scale-95 opacity-60"/>}<SwipeCard key={`${current.type}:${current.id}`} movie={current} favorite={isFavorite(current.id, current.type === "series")} committing={committing} onCommit={commit}/></div>
+      <div className="mt-6 flex justify-center items-center gap-4"><Action label="Пропустить" className="h-16 w-16 text-skip border-skip/40" disabled={Boolean(committing)} onClick={() => commit("left")}><X className="h-7 w-7"/></Action><Link aria-label="Подробнее" href={`/movie/${current.id}${current.type === "series" ? "?series=1" : ""}`} className="h-12 w-12 rounded-full border border-white/20 grid place-items-center hover:bg-white hover:text-black"><Info className="h-5 w-5"/></Link><Action label="В избранное" className="h-16 w-16 text-like border-like/40" disabled={Boolean(committing)} onClick={() => commit("right")}><Heart className="h-7 w-7"/></Action></div>
     </div>
-  );
+  </div>;
 }
 
-function SwipeCard({
-  movie,
-  onDragEnd,
-  onOpen,
-  isFav,
-}: {
-  movie: Movie;
-  onDragEnd: (_: unknown, info: PanInfo) => void;
-  onSwipe: (dir: "left" | "right") => void;
-  onOpen: () => void;
-  isFav: boolean;
-}) {
-  const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-15, 15]);
-  const likeOpacity = useTransform(x, [40, 120], [0, 1]);
-  const skipOpacity = useTransform(x, [-120, -40], [1, 0]);
-
-  return (
-    <motion.div
-      drag="x"
-      dragConstraints={{ left: 0, right: 0 }}
-      dragElastic={0.7}
-      onDragEnd={onDragEnd}
-      style={{ x, rotate }}
-      className="absolute inset-0 cursor-grab active:cursor-grabbing no-select"
-      whileTap={{ cursor: "grabbing" }}
-    >
-      <div className="relative w-full h-full rounded-3xl overflow-hidden glass-panel border border-white/10 shadow-cinematic">
-        {/* Постер на весь блок карточки */}
-        <motion.img
-          src={movie.posterUrl}
-          alt={movie.title}
-          draggable={false}
-          initial={{ scale: 1.04, opacity: 0.9 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-          className="absolute inset-0 w-full h-full object-cover"
-        />
-
-        {/* Градиенты для читаемости */}
-        <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/70 to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black via-black/70 to-transparent" />
-
-        {/* Лейблы свайпа */}
-        <motion.div
-          style={{ opacity: likeOpacity }}
-          className="absolute top-8 right-8 border-4 border-like rounded-2xl px-3 py-1 rotate-12 z-10"
-        >
-          <span className="text-like font-black text-2xl tracking-wider">
-            В ИЗБРАННОЕ
-          </span>
-        </motion.div>
-        <motion.div
-          style={{ opacity: skipOpacity }}
-          className="absolute top-8 left-8 border-4 border-skip rounded-2xl px-3 py-1 -rotate-12 z-10"
-        >
-          <span className="text-skip font-black text-2xl tracking-wider">
-            ПРОПУСК
-          </span>
-        </motion.div>
-
-        {/* Инфо снизу */}
-        <div className="absolute inset-x-0 bottom-0 p-5 sm:p-6 z-10">
-          <div className="flex items-start justify-between gap-3 mb-2">
-            <div className="flex-1 min-w-0">
-              <motion.h3
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="text-2xl font-bold leading-tight truncate drop-shadow-lg"
-              >
-                {movie.title}
-              </motion.h3>
-              <motion.p
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.25 }}
-                className="text-sm text-white/70 italic truncate drop-shadow"
-              >
-                {movie.originalTitle}
-              </motion.p>
-            </div>
-            <RatingBadge rating={movie.rating} />
-          </div>
-
-          <div className="flex items-center gap-3 text-xs text-white/80 mb-2 drop-shadow">
-            <span>{movie.year}</span>
-            <span className="w-1 h-1 rounded-full bg-white/40" />
-            <span className="flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              {formatDuration(movie.duration)}
-            </span>
-            <span className="w-1 h-1 rounded-full bg-white/40" />
-            <span className="truncate">{movie.genres.join(", ")}</span>
-          </div>
-        </div>
-
-        {isFav && (
-          <div className="absolute top-4 left-4 bg-like/90 text-black text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 z-10">
-            <Heart className="h-3 w-3" fill="currentColor" />
-            В избранном
-          </div>
-        )}
-
-        {/* Кликабельная зона для открытия карточки */}
-        <button
-          onClick={onOpen}
-          aria-label="Открыть карточку фильма"
-          className="absolute inset-0 z-0 cursor-pointer"
-        />
-      </div>
-    </motion.div>
-  );
+function SwipeCard({ movie, favorite, committing, onCommit }: { movie: Movie; favorite: boolean; committing: "left" | "right" | null; onCommit: (direction: "left" | "right") => void }) {
+  const x = useMotionValue(0); const rotate = useTransform(x, [-240, 240], [-14, 14]); const like = useTransform(x, [35, 110], [0, 1]); const skip = useTransform(x, [-110, -35], [1, 0]); const [expanded, setExpanded] = useState(false);
+  const dragEnd = (_: unknown, info: PanInfo) => { const direction = info.offset.x > 0 ? "right" : "left"; if (Math.abs(info.offset.x) >= 90 || Math.abs(info.velocity.x) >= 650) onCommit(direction); };
+  return <motion.article drag={committing ? false : "x"} dragConstraints={{ left: 0, right: 0 }} dragElastic={.65} onDragEnd={dragEnd} animate={committing ? { x: committing === "right" ? 700 : -700, opacity: 0, rotate: committing === "right" ? 18 : -18 } : { x: 0, opacity: 1, rotate: 0 }} transition={committing ? { duration: .25, ease: "easeIn" } : { type: "spring", stiffness: 400, damping: 32 }} style={committing ? undefined : { x, rotate }} className="absolute inset-0 cursor-grab active:cursor-grabbing group no-select">
+    <div className="relative h-full overflow-hidden rounded-3xl border border-white/10 bg-zinc-900 shadow-cinematic">{movie.posterUrl ? <img src={movie.posterUrl} alt={movie.title} draggable={false} className="absolute inset-0 h-full w-full object-cover"/> : <div className="absolute inset-0 grid place-items-center text-muted-foreground">Нет постера</div>}<div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/25"/><motion.div style={{ opacity: like }} className="absolute right-7 top-8 border-4 border-like text-like rounded-xl px-3 py-1 rotate-12 font-black">БЕРУ</motion.div><motion.div style={{ opacity: skip }} className="absolute left-7 top-8 border-4 border-skip text-skip rounded-xl px-3 py-1 -rotate-12 font-black">МИМО</motion.div>
+      {favorite && <span className="absolute left-4 top-4 rounded-full bg-like px-2 py-1 text-xs font-bold text-black">В избранном</span>}
+      <div className="absolute inset-x-0 bottom-0 p-5 sm:p-6" onPointerDown={(event) => event.stopPropagation()}><div className="flex gap-3"><div className="min-w-0 flex-1"><h2 className="text-2xl font-bold leading-tight">{movie.title}</h2>{movie.originalTitle && <p className="truncate text-sm italic text-white/65">{movie.originalTitle}</p>}</div>{movie.rating != null && <span className="h-fit rounded-lg bg-black/60 px-2.5 py-1.5 text-sm text-rating"><Star className="inline h-3.5 w-3.5 fill-current"/> {movie.rating.toFixed(1)}</span>}</div><div className="mt-2 flex gap-2 text-xs text-white/75">{movie.year && <span>{movie.year}</span>}{movie.duration && <span><Clock className="inline h-3 w-3"/> {formatDuration(movie.duration)}</span>}{movie.genres.length > 0 && <span className="truncate">{movie.genres.join(", ")}</span>}</div>
+        {movie.description && <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="mt-3 w-full text-left"><span className={cn("block text-sm leading-relaxed text-white/80 transition-all duration-200", expanded ? "line-clamp-none" : "line-clamp-2 group-hover:line-clamp-3")}>{movie.description}</span><span className="mt-1 inline-flex items-center gap-1 text-[11px] text-white/55">{expanded ? "Свернуть" : "Описание"}<ChevronDown className={cn("h-3 w-3 transition-transform duration-200", expanded && "rotate-180")}/></span></button>}
+      </div></div>
+  </motion.article>;
 }
-
-function DeckCardLayer({
-  movie,
-  className,
-}: {
-  movie: Movie;
-  className?: string;
-}) {
-  return (
-    <div className={cn("rounded-3xl overflow-hidden", className)}>
-      <img
-        src={movie.posterUrl}
-        alt={movie.title}
-        className="w-full h-full object-cover"
-        draggable={false}
-      />
-    </div>
-  );
-}
-
-function RatingBadge({ rating }: { rating: number }) {
-  return (
-    <div className="flex items-center gap-1 bg-black/60 backdrop-blur px-2.5 py-1.5 rounded-lg border border-white/10">
-      <Star className="h-3.5 w-3.5 text-rating" fill="currentColor" />
-      <span className="text-sm font-bold tabular-nums text-rating">
-        {rating.toFixed(1)}
-      </span>
-    </div>
-  );
-}
-
-function ActionButton({
-  variant,
-  onClick,
-  icon,
-}: {
-  variant: "like" | "skip" | "info";
-  onClick: () => void;
-  icon: React.ReactNode;
-}) {
-  const styles = {
-    like: "w-16 h-16 border-like/40 text-like hover:bg-like hover:text-black",
-    skip: "w-16 h-16 border-skip/40 text-skip hover:bg-skip hover:text-black",
-    info:
-      "w-12 h-12 border-white/20 text-foreground hover:bg-white hover:text-black",
-  } as const;
-
-  return (
-    <motion.button
-      whileHover={{ scale: 1.08 }}
-      whileTap={{ scale: 0.92 }}
-      onClick={onClick}
-      className={cn(
-        "rounded-full border-2 flex items-center justify-center transition-all",
-        styles[variant]
-      )}
-      aria-label={
-        variant === "like"
-          ? "В избранное"
-          : variant === "skip"
-          ? "Пропустить"
-          : "Карточка фильма"
-      }
-    >
-      {icon}
-    </motion.button>
-  );
-}
-
-function formatDuration(min: number): string {
-  if (min < 60) return `${min} мин`;
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return m === 0 ? `${h} ч` : `${h} ч ${m} мин`;
-}
+function Layer({ movie, className }: { movie: Movie; className: string }) { return <div className={cn("absolute inset-0 overflow-hidden rounded-3xl bg-zinc-900", className)}>{movie.posterUrl && <img src={movie.posterUrl} alt="" className="h-full w-full object-cover"/>}</div>; }
+function Action({ label, onClick, disabled, className, children }: { label: string; onClick: () => void; disabled: boolean; className: string; children: React.ReactNode }) { return <button aria-label={label} disabled={disabled} onClick={onClick} className={cn("rounded-full border-2 grid place-items-center transition hover:scale-105 disabled:opacity-40", className)}>{children}</button>; }
+function Status({ text, back }: { text: string; back?: boolean }) { return <div className="py-24 text-center text-muted-foreground"><p>{text}</p>{back && <Link href="/" className="mt-4 inline-block text-rating">К киноплёнкам</Link>}</div>; }
+function formatDuration(value: number) { const hours = Math.floor(value / 60); const minutes = value % 60; return hours ? `${hours} ч${minutes ? ` ${minutes} мин` : ""}` : `${minutes} мин`; }
+function merge(current: Movie[], incoming: Movie[]) { const map = new Map(current.map((movie) => [`${movie.type}:${movie.id}`, movie])); incoming.forEach((movie) => map.set(`${movie.type}:${movie.id}`, movie)); return [...map.values()]; }

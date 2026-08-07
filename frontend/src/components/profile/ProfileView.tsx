@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   User,
   Link2,
@@ -14,19 +15,21 @@ import {
   UserPlus,
   ChevronRight,
 } from "lucide-react";
-import { useAppStore } from "@/lib/store";
+import { contentKey, parseContentKey, useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { AuthModal } from "@/components/common/AuthModal";
 import { api } from "@/lib/api";
 
 export function ProfileView() {
-  const { user, movies, favorites, ratings, setView, removeRating } = useAppStore();
+  const router = useRouter();
+  const { user, movies, favorites, ratings } = useAppStore();
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [kpLink, setKpLink] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [importId, setImportId] = useState<string | null>(null);
   const [importState, setImportState] = useState<{ status: string; progress: number; importedCount?: number; error?: string | null; captcha?: { novncUrl?: string | null; screenshotBase64?: string | null; screenshotMimeType?: string | null; message?: string | null } | null } | null>(null);
 
@@ -54,15 +57,18 @@ export function ProfileView() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [importId]);
 
-  const favMovies = movies.filter((m) => favorites.includes(m.id));
+  const favMovies = movies.filter((m) => favorites.includes(contentKey(m.id, m.type === "series")));
   const ratedEntries = Object.entries(ratings)
-    .map(([id, r]) => ({ movie: movies.find((movie) => movie.id === parseInt(id))!, rating: r }))
+    .map(([key, r]) => {
+      const content = parseContentKey(key);
+      return { movie: movies.find((movie) => movie.id === content.movieId && (movie.type === "series") === content.isSeries)!, rating: r };
+    })
     .filter((e) => e.movie);
   const avgRating =
     ratedEntries.length > 0
       ? ratedEntries.reduce((s, e) => s + e.rating, 0) / ratedEntries.length
       : 0;
-  const totalMinutes = favMovies.reduce((s, m) => s + m.duration, 0);
+  const totalMinutes = favMovies.reduce((s, m) => s + (m.duration ?? 0), 0);
 
   const openAuth = (mode: "login" | "register") => {
     setAuthMode(mode);
@@ -72,13 +78,23 @@ export function ProfileView() {
   const handleSync = async () => {
     if (!kpLink.trim()) return;
     setSyncing(true);
+    setImportError(null);
     try {
       const started = await api.importProfile(kpLink.trim());
       setImportId(started.id);
       setImportState({ status: started.status, progress: started.progress });
       setSynced(false);
-    } catch {
+    } catch (error) {
       setSyncing(false);
+      const apiError = error as Error & { status?: number; data?: unknown };
+      const details = apiError.data as { id?: string; status?: string; message?: string } | undefined;
+      if (apiError.status === 409 && details?.id) {
+        setImportId(details.id);
+        setImportState({ status: details.status ?? "Running", progress: 0 });
+        setImportError("Этот импорт уже выполняется — подключил отображение его текущего состояния.");
+      } else {
+        setImportError(apiError.message || "Не удалось запустить импорт");
+      }
     }
   };
 
@@ -257,6 +273,12 @@ export function ProfileView() {
             </motion.div>
           )}
 
+          {importError && (
+            <div className="mt-3 rounded-xl border border-skip/20 bg-skip/10 px-3 py-2 text-xs text-skip">
+              {importError}
+            </div>
+          )}
+
           {importState && !synced && (
             <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-4 space-y-3">
               <div className="flex items-center justify-between gap-3">
@@ -285,10 +307,10 @@ export function ProfileView() {
                   className="max-h-48 w-full rounded-lg border border-white/10 object-contain"
                 />
               )}
-              {importState.status === "WaitingForUser" && importId && (
+              {(importState.status === "WaitingForUser" || importState.status === "Failed") && importId && (
                 <div className="flex gap-2">
-                  <button type="button" onClick={async () => { setSyncing(true); try { const next = await api.importResume(importId); setImportState(next); } catch { setSyncing(false); } }} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black hover:bg-rating">Продолжить импорт</button>
-                  <button type="button" onClick={async () => { try { const next = await api.importCancel(importId); setImportState(next); setSyncing(false); } catch { /* следующая проверка покажет актуальное состояние */ } }} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground">Отменить</button>
+                  <button type="button" disabled={syncing} onClick={async () => { setSyncing(true); setImportError(null); try { const next = await api.importResume(importId); setImportState(next); } catch (cause) { setSyncing(false); setImportError(cause instanceof Error ? cause.message : "Не удалось продолжить импорт"); } }} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black hover:bg-rating disabled:opacity-50">{syncing ? "Продолжаем…" : "Продолжить импорт"}</button>
+                  {importState.status === "WaitingForUser" && <button type="button" onClick={async () => { try { const next = await api.importCancel(importId); setImportState(next); setSyncing(false); } catch { /* следующая проверка покажет актуальное состояние */ } }} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground">Отменить</button>}
                 </div>
               )}
               {importState.error && <p className="text-xs text-red-300">{importState.error}</p>}
@@ -301,7 +323,7 @@ export function ProfileView() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Избранное */}
         <motion.button
-          onClick={() => setView({ name: "favorites" })}
+          onClick={() => router.push("/favorites")}
           whileHover={{ y: -3 }}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -334,11 +356,11 @@ export function ProfileView() {
                       key={m.id}
                       className="w-8 h-12 rounded overflow-hidden border border-white/10 shrink-0"
                     >
-                      <img
+                      {m.posterUrl && <img
                         src={m.posterUrl}
                         alt={m.title}
                         className="w-full h-full object-cover"
-                      />
+                      />}
                     </div>
                   ))}
                   {favMovies.length > 5 && (
@@ -354,7 +376,7 @@ export function ProfileView() {
 
         {/* Мои оценки */}
         <motion.button
-          onClick={() => setView({ name: "ratings" })}
+          onClick={() => router.push("/ratings")}
           whileHover={{ y: -3 }}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -392,11 +414,11 @@ export function ProfileView() {
                         className="relative w-8 h-12 rounded overflow-hidden border border-white/10 shrink-0"
                         title={`${movie.title} — ${rating}/10`}
                       >
-                        <img
+                        {movie.posterUrl && <img
                           src={movie.posterUrl}
                           alt={movie.title}
                           className="w-full h-full object-cover"
-                        />
+                        />}
                         <div className="absolute bottom-0 inset-x-0 bg-rating text-black text-[8px] font-black text-center leading-3">
                           {rating}
                         </div>

@@ -81,7 +81,7 @@ def import_ratings(payload: RatingsRequest) -> RatingsResponse:
     scraper = KinopoiskScraper(settings)
     try:
         with selenium_gate:
-            source_url, scraped = scraper.scrape(str(payload.profile_url), payload.include_unrated)
+            source_url, result = scraper.scrape(str(payload.profile_url), payload.include_unrated)
     except InvalidProfileError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except CaptchaRequiredError as exc:
@@ -91,6 +91,7 @@ def import_ratings(payload: RatingsRequest) -> RatingsResponse:
             payload.include_unrated,
             exc.collected_items,
             exc.page_number,
+            exc.pages_total,
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -99,13 +100,16 @@ def import_ratings(payload: RatingsRequest) -> RatingsResponse:
     except ScraperError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    items = [RatedItem.model_validate(item.__dict__) for item in scraped]
+    items = [RatedItem.model_validate(item.__dict__) for item in result.items]
     return RatingsResponse(
         profile_url=payload.profile_url,
         source_url=source_url,
         total=len(items),
         rated=sum(item.rating is not None for item in items),
         unrated=sum(item.rating is None for item in items),
+        pages_processed=result.pages_processed,
+        pages_total=result.pages_total,
+        complete=True,
         items=items,
     )
 
@@ -124,25 +128,36 @@ def resume_after_captcha(session_id: str) -> RatingsResponse:
     scraper = KinopoiskScraper(settings)
     try:
         with selenium_gate:
-            scraped = scraper.resume(session.driver, session.source_url, session.include_unrated, session.collected_items, session.page_number)
+            result = scraper.resume(
+                session.driver,
+                session.source_url,
+                session.include_unrated,
+                session.collected_items,
+                session.page_number,
+                session.pages_total,
+            )
     except CaptchaRequiredError as exc:
         # Selenium-контекст остаётся тем же; пользователь может завершить challenge
         # и вызвать resume ещё раз до истечения TTL.
         session.collected_items = exc.collected_items
         session.page_number = exc.page_number
+        session.pages_total = exc.pages_total
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=captcha_detail(exc, session_id, session.novnc_url)) from exc
     except ScraperError as exc:
         captcha_sessions.remove(session_id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     captcha_sessions.remove(session_id)
-    items = [RatedItem.model_validate(item.__dict__) for item in scraped]
+    items = [RatedItem.model_validate(item.__dict__) for item in result.items]
     return RatingsResponse(
         profile_url=session.source_url,
         source_url=session.source_url,
         total=len(items),
         rated=sum(item.rating is not None for item in items),
         unrated=sum(item.rating is None for item in items),
+        pages_processed=result.pages_processed,
+        pages_total=result.pages_total,
+        complete=True,
         items=items,
     )
 

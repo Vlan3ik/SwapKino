@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 interface RatingControlProps {
   movieId: number;
+  isSeries?: boolean;
   /** Показывать компактную версию (только звёзды) */
   compact?: boolean;
 }
@@ -17,9 +18,9 @@ interface RatingControlProps {
  * Использует звёзды (10 звёзд = 10 баллов).
  * Значение сохраняется на backend для авторизованного пользователя.
  */
-export function RatingControl({ movieId, compact = false }: RatingControlProps) {
+export function RatingControl({ movieId, isSeries = false, compact = false }: RatingControlProps) {
   const { getRating, setRating, removeRating } = useAppStore();
-  const stored = getRating(movieId);
+  const stored = getRating(movieId, isSeries);
   const [hover, setHover] = useState<number | null>(null);
 
   const display = hover ?? stored ?? 0;
@@ -34,9 +35,9 @@ export function RatingControl({ movieId, compact = false }: RatingControlProps) 
             onMouseLeave={() => setHover(null)}
             onClick={() => {
               if (stored === n) {
-                removeRating(movieId);
+                removeRating(movieId, isSeries);
               } else {
-                setRating(movieId, n);
+                setRating(movieId, n, isSeries);
               }
             }}
             className="p-0.5"
@@ -78,7 +79,7 @@ export function RatingControl({ movieId, compact = false }: RatingControlProps) 
               <span className="text-sm text-muted-foreground">/10</span>
             </div>
             <button
-              onClick={() => removeRating(movieId)}
+              onClick={() => removeRating(movieId, isSeries)}
               className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 mt-1"
             >
               <X className="h-3 w-3" />
@@ -96,7 +97,7 @@ export function RatingControl({ movieId, compact = false }: RatingControlProps) 
             whileTap={{ scale: 0.9 }}
             onMouseEnter={() => setHover(n)}
             onMouseLeave={() => setHover(null)}
-            onClick={() => setRating(movieId, n)}
+            onClick={() => setRating(movieId, n, isSeries)}
             aria-label={`Поставить ${n}`}
             className="p-1"
           >

@@ -1,5 +1,8 @@
+using System.Globalization;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 
 namespace SwapKino.Api;
@@ -10,155 +13,172 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
 {
     public async Task<JsonDocument> Get(string path, Dictionary<string, string?> query, CancellationToken ct)
     {
-        var relativePath = path.TrimStart('/');
         var token = config["TMDB_ACCESS_TOKEN"];
         var client = factory.CreateClient("tmdb");
         for (var attempt = 0; ; attempt++)
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, relativePath + "?" + string.Join("&", query.Where(x => x.Value is not null).Select(x => $"{x.Key}={Uri.EscapeDataString(x.Value!)}")));
+            var values = new Dictionary<string,string?>(query);
+            if (string.IsNullOrWhiteSpace(token)) values["api_key"] = config["TMDB_API_KEY"];
+            var uri = path.TrimStart('/') + "?" + string.Join("&", values.Where(x => x.Value is not null).Select(x => $"{x.Key}={Uri.EscapeDataString(x.Value!)}"));
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             if (!string.IsNullOrWhiteSpace(token)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            else request.RequestUri = new Uri(request.RequestUri + $"&api_key={config["TMDB_API_KEY"]}", UriKind.Relative);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
             if (response.IsSuccessStatusCode)
-                return JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-
-            var retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
-            if (!retryable || attempt >= 3)
             {
-                response.EnsureSuccessStatusCode();
+                // Parse directly from the response stream. ReadAsStringAsync would
+                // retain a second, potentially very large, UTF-16 copy while the
+                // JsonDocument builds its own representation.
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             }
-
-            var delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1));
-            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds, 8000)), ct);
+            if (((int)response.StatusCode != 429 && (int)response.StatusCode < 500) || attempt >= 3) response.EnsureSuccessStatusCode();
+            await Task.Delay(response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, attempt + 1)), ct);
         }
+    }
+
+    public async Task<TmdbPage> SearchAsync(string query, bool isSeries, CancellationToken ct)
+    {
+        using var json = await Get(isSeries ? "/search/tv" : "/search/movie", new()
+        {
+            ["language"] = "ru-RU",
+            ["page"] = "1",
+            ["query"] = query,
+            ["include_adult"] = "false"
+        }, ct);
+        var results = json.RootElement.GetProperty("results").EnumerateArray()
+            .Select(x => SummaryCandidate(x, isSeries)).ToList();
+        return new(results,
+            json.RootElement.TryGetProperty("total_pages", out var pages) ? pages.GetInt32() : 1,
+            json.RootElement.TryGetProperty("total_results", out var total) ? total.GetInt32() : results.Count);
     }
 
     public async Task<TmdbPage> DiscoverPage(int page, string? search, CancellationToken ct, bool forceRefresh = false, string endpoint = "/discover/movie")
     {
-        if (!forceRefresh && string.IsNullOrWhiteSpace(search) && endpoint == "/discover/movie")
+        var isSeries = endpoint.Contains("/tv", StringComparison.Ordinal);
+        // Only discover endpoints share the persisted catalog cache. Endpoint feeds
+        // such as top_rated have their own ordering and must not be satisfied by a
+        // popularity-sorted page from the global catalog.
+        if (!forceRefresh && string.IsNullOrWhiteSpace(search) && endpoint.StartsWith("/discover/", StringComparison.Ordinal))
         {
-            var cached = await db.Movies
-                .AsNoTracking()
-                .OrderByDescending(x => x.Popularity)
-                .Skip(Math.Max(0, page - 1) * 20)
-                .Take(20)
-                .ToListAsync(ct);
+            var cached = await db.Movies.AsNoTracking().Include(x => x.MovieGenres).ThenInclude(x => x.Genre)
+                .Where(x => x.IsSeries == isSeries).OrderByDescending(x => x.Popularity).ThenBy(x => x.TmdbId)
+                .Skip(Math.Max(0,page-1)*20).Take(20).ToListAsync(ct);
             if (cached.Count == 20)
             {
-                var total = await db.Movies.CountAsync(ct);
-                return new TmdbPage(cached, Math.Max(1, (int)Math.Ceiling(total / 20d)), total);
+                var total = await db.Movies.CountAsync(x => x.IsSeries == isSeries, ct);
+                return new(cached, Math.Max(1,(int)Math.Ceiling(total/20d)), total);
             }
         }
-
-        try
-        {
-            var json = await Get(search is null ? endpoint : "/search/movie", new() { ["language"] = "ru-RU", ["page"] = page.ToString(), ["query"] = search, ["include_adult"] = "false", ["sort_by"] = endpoint == "/discover/movie" ? "popularity.desc" : null }, ct);
-            var result = new List<Movie>();
-            foreach (var x in json.RootElement.GetProperty("results").EnumerateArray())
-            {
-                var id = x.GetProperty("id").GetInt32();
-                var movie = await db.Movies.FindAsync([id], ct) ?? new Movie { TmdbId = id };
-                movie.Title = x.TryGetProperty("title", out var title) ? title.GetString() ?? "" : movie.Title;
-                movie.OriginalTitle = x.TryGetProperty("original_title", out var original) ? original.GetString() : movie.OriginalTitle;
-                movie.Overview = x.TryGetProperty("overview", out var overview) ? overview.GetString() : movie.Overview;
-                movie.ReleaseDate = x.TryGetProperty("release_date", out var date) ? date.GetString() : movie.ReleaseDate;
-                movie.VoteAverage = x.TryGetProperty("vote_average", out var rating) ? rating.GetDouble() : movie.VoteAverage;
-                movie.VoteCount = x.TryGetProperty("vote_count", out var votes) ? votes.GetInt32() : movie.VoteCount;
-                movie.Popularity = x.TryGetProperty("popularity", out var pop) ? pop.GetDouble() : movie.Popularity;
-                movie.PosterPath = x.TryGetProperty("poster_path", out var poster) ? poster.GetString() : movie.PosterPath;
-                movie.BackdropPath = x.TryGetProperty("backdrop_path", out var back) ? back.GetString() : movie.BackdropPath;
-                movie.Payload = x.GetRawText();
-                if (db.Entry(movie).State == EntityState.Detached) db.Movies.Add(movie);
-                result.Add(movie);
-            }
-            await db.SaveChangesAsync(ct);
-            var totalPages = json.RootElement.TryGetProperty("total_pages", out var pages) ? pages.GetInt32() : Math.Max(1, (int)Math.Ceiling(result.Count / 20d));
-            var totalResults = json.RootElement.TryGetProperty("total_results", out var results) ? results.GetInt32() : result.Count;
-            return new TmdbPage(result, totalPages, totalResults);
-        }
-        catch (HttpRequestException)
-        {
-            if (config.GetValue("TMDB_ALLOW_FALLBACK", false))
-            {
-                var fallback = await Fallback(search, page, ct);
-                return new TmdbPage(fallback, Math.Max(1, (int)Math.Ceiling(fallback.Count / 20d)), fallback.Count);
-            }
-            var local = await db.Movies.AsNoTracking()
-                .Where(x => string.IsNullOrWhiteSpace(search) || x.Title.Contains(search) || (x.OriginalTitle != null && x.OriginalTitle.Contains(search)))
-                .OrderByDescending(x => x.Popularity)
-                .Skip(Math.Max(0, page - 1) * 20)
-                .Take(20)
-                .ToListAsync(ct);
-            var localTotal = await db.Movies.AsNoTracking()
-                .Where(x => string.IsNullOrWhiteSpace(search) || x.Title.Contains(search) || (x.OriginalTitle != null && x.OriginalTitle.Contains(search)))
-                .CountAsync(ct);
-            return new TmdbPage(local, Math.Max(1, (int)Math.Ceiling(localTotal / 20d)), localTotal);
-        }
+        return await FetchPage(page, search, isSeries, search is null ? endpoint : isSeries ? "/search/tv" : "/search/movie", ct);
     }
 
     public async Task<List<Movie>> Discover(int page, string? search, CancellationToken ct, bool forceRefresh = false, string endpoint = "/discover/movie")
         => (await DiscoverPage(page, search, ct, forceRefresh, endpoint)).Results.ToList();
 
-    public async Task<Movie> Details(int id, CancellationToken ct)
+    private async Task<TmdbPage> FetchPage(int page, string? search, bool isSeries, string endpoint, CancellationToken ct)
     {
-        try
-        {
-            var json = await Get($"/movie/{id}", new() { ["language"] = "ru-RU", ["append_to_response"] = "credits,videos,watch/providers,keywords" }, ct);
-            var x = json.RootElement;
-            var movie = await db.Movies.FindAsync([id], ct) ?? new Movie { TmdbId = id };
-            movie.Title = x.GetProperty("title").GetString() ?? movie.Title;
-            movie.OriginalTitle = x.TryGetProperty("original_title", out var original) ? original.GetString() : null;
-            movie.Overview = x.TryGetProperty("overview", out var overview) ? overview.GetString() : null;
-            movie.ReleaseDate = x.TryGetProperty("release_date", out var date) ? date.GetString() : null;
-            movie.RuntimeMinutes = x.TryGetProperty("runtime", out var runtime) && runtime.ValueKind != JsonValueKind.Null ? runtime.GetInt32() : null;
-            movie.VoteAverage = x.GetProperty("vote_average").GetDouble();
-            movie.VoteCount = x.GetProperty("vote_count").GetInt32();
-            movie.Popularity = x.GetProperty("popularity").GetDouble();
-            movie.PosterPath = x.TryGetProperty("poster_path", out var poster) ? poster.GetString() : null;
-            movie.BackdropPath = x.TryGetProperty("backdrop_path", out var back) ? back.GetString() : null;
-            movie.DetailsState = "ready";
-            movie.Payload = x.GetRawText();
-            if (db.Entry(movie).State == EntityState.Detached) db.Movies.Add(movie);
-            await db.SaveChangesAsync(ct);
-            return movie;
-        }
+        using var json = await Get(endpoint, new() { ["language"]="ru-RU", ["page"]=page.ToString(CultureInfo.InvariantCulture), ["query"]=search, ["include_adult"]="false", ["sort_by"]=endpoint.StartsWith("/discover/") ? "popularity.desc" : null }, ct);
+        var result = new List<Movie>();
+        foreach (var x in json.RootElement.GetProperty("results").EnumerateArray()) result.Add(await UpsertSummary(x, isSeries, ct));
+        await db.SaveChangesAsync(ct);
+        return new(result, json.RootElement.TryGetProperty("total_pages",out var pages)?pages.GetInt32():1, json.RootElement.TryGetProperty("total_results",out var total)?total.GetInt32():result.Count);
+    }
+
+    public async Task<Movie> UpsertSummary(JsonElement x, bool isSeries, CancellationToken ct)
+    {
+        var id = x.GetProperty("id").GetInt32();
+        var movie = await db.Movies.Include(m => m.MovieGenres).ThenInclude(mg => mg.Genre).SingleOrDefaultAsync(m => m.TmdbId == id && m.IsSeries == isSeries, ct) ?? new Movie { TmdbId=id, IsSeries=isSeries };
+        movie.Title = String(x, isSeries ? "name" : "title") ?? movie.Title;
+        movie.OriginalTitle = String(x, isSeries ? "original_name" : "original_title") ?? movie.OriginalTitle;
+        movie.Overview = NonEmpty(String(x,"overview")) ?? movie.Overview;
+        movie.OriginalLanguage = String(x,"original_language") ?? movie.OriginalLanguage;
+        movie.ReleaseDate = NonEmpty(String(x,isSeries?"first_air_date":"release_date")) ?? movie.ReleaseDate;
+        movie.VoteAverage = Number(x,"vote_average") ?? movie.VoteAverage;
+        movie.VoteCount = Integer(x,"vote_count") ?? movie.VoteCount;
+        movie.Popularity = Number(x,"popularity") ?? movie.Popularity;
+        movie.PosterPath = String(x,"poster_path") ?? movie.PosterPath;
+        movie.BackdropPath = String(x,"backdrop_path") ?? movie.BackdropPath;
+        movie.SummaryUpdatedAt = movie.UpdatedAt = DateTime.UtcNow;
+        // Never replace a detail payload with a discover/search summary.
+        if (movie.DetailsState != "ready") movie.Payload = x.GetRawText();
+        if (db.Entry(movie).State == EntityState.Detached) db.Movies.Add(movie);
+        await SyncGenres(movie, x, isSeries, ct);
+        return movie;
+    }
+
+    private static Movie SummaryCandidate(JsonElement x, bool isSeries) => new()
+    {
+        TmdbId = x.GetProperty("id").GetInt32(),
+        IsSeries = isSeries,
+        Title = String(x, isSeries ? "name" : "title") ?? "",
+        OriginalTitle = String(x, isSeries ? "original_name" : "original_title"),
+        Overview = NonEmpty(String(x, "overview")),
+        OriginalLanguage = String(x, "original_language"),
+        ReleaseDate = NonEmpty(String(x, isSeries ? "first_air_date" : "release_date")),
+        VoteAverage = Number(x, "vote_average") ?? 0,
+        VoteCount = Integer(x, "vote_count") ?? 0,
+        Popularity = Number(x, "popularity") ?? 0,
+        PosterPath = NonEmpty(String(x, "poster_path")),
+        BackdropPath = NonEmpty(String(x, "backdrop_path")),
+        // Search results are short-lived matching candidates, not persisted
+        // details. Keeping every result's raw JSON multiplies import memory use.
+        Payload = "{}"
+    };
+
+    public async Task<Movie> Details(int id, CancellationToken ct, bool isSeries = false)
+    {
+        var path = isSeries ? $"/tv/{id}" : $"/movie/{id}";
+        JsonDocument json;
+        try { json = await Get(path, new() { ["language"]="ru-RU", ["append_to_response"]="credits,videos,watch/providers,keywords,images", ["include_image_language"]="ru,en,null" }, ct); }
         catch (HttpRequestException)
         {
-            var existing = await db.Movies.FindAsync([id], ct);
-            if (existing is not null) return existing;
-            if (!config.GetValue("TMDB_ALLOW_FALLBACK", false)) throw;
-            var fallback = FallbackCatalog.FirstOrDefault(x => x.TmdbId == id);
-            if (fallback is null) throw;
-            db.Movies.Add(fallback);
-            await db.SaveChangesAsync(ct);
-            return fallback;
+            var stale = await db.Movies.Include(x=>x.MovieGenres).ThenInclude(x=>x.Genre).SingleOrDefaultAsync(x=>x.TmdbId==id&&x.IsSeries==isSeries,ct);
+            if (stale is not null) { stale.DetailAttemptCount++; stale.DetailsState="failed"; await db.SaveChangesAsync(ct); return stale; }
+            throw;
         }
-    }
-
-    private async Task<List<Movie>> Fallback(string? search, int page, CancellationToken ct)
-    {
-        var query = FallbackCatalog.AsEnumerable();
-        if (!string.IsNullOrWhiteSpace(search)) query = query.Where(x => x.Title.Contains(search, StringComparison.OrdinalIgnoreCase) || (x.OriginalTitle?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
-        var rows = query.Skip(Math.Max(0, page - 1) * 20).Take(20).ToList();
-        foreach (var row in rows)
+        using var jsonLease = json;
+        var x=json.RootElement;
+        string? fallbackOverview=null,fallbackTagline=null;
+        if(string.IsNullOrWhiteSpace(String(x,"overview"))||string.IsNullOrWhiteSpace(String(x,"tagline")))
         {
-            if (await db.Movies.FindAsync([row.TmdbId], ct) is null) db.Movies.Add(row);
+            try{using var en=await Get(path,new(){["language"]="en-US"},ct);fallbackOverview=NonEmpty(String(en.RootElement,"overview"));fallbackTagline=NonEmpty(String(en.RootElement,"tagline"));}catch(HttpRequestException){ }
         }
-        await db.SaveChangesAsync(ct);
-        return rows;
+        var movie=await db.Movies.Include(m=>m.MovieGenres).ThenInclude(mg=>mg.Genre).SingleOrDefaultAsync(m=>m.TmdbId==id&&m.IsSeries==isSeries,ct) ?? new Movie{TmdbId=id,IsSeries=isSeries};
+        movie.Title=String(x,isSeries?"name":"title")??movie.Title;
+        movie.OriginalTitle=String(x,isSeries?"original_name":"original_title");
+        movie.Tagline=NonEmpty(String(x,"tagline"))??fallbackTagline;
+        movie.Overview=NonEmpty(String(x,"overview"))??fallbackOverview??movie.Overview;
+        movie.OriginalLanguage=String(x,"original_language");
+        movie.ReleaseDate=NonEmpty(String(x,isSeries?"first_air_date":"release_date"));
+        movie.RuntimeMinutes=isSeries ? FirstRuntime(x) : Integer(x,"runtime");
+        movie.VoteAverage=Number(x,"vote_average")??0; movie.VoteCount=Integer(x,"vote_count")??0; movie.Popularity=Number(x,"popularity")??0;
+        // A localized details response can legitimately omit artwork. Keep known
+        // paths instead of turning a previously displayable movie into a blank card.
+        movie.PosterPath=NonEmpty(String(x,"poster_path"))??movie.PosterPath;
+        movie.BackdropPath=NonEmpty(String(x,"backdrop_path"))??movie.BackdropPath;
+        movie.DetailsState="ready"; movie.DetailAttemptCount=0; movie.Payload=x.GetRawText(); movie.DetailsUpdatedAt=movie.UpdatedAt=DateTime.UtcNow;
+        if(db.Entry(movie).State==EntityState.Detached)db.Movies.Add(movie);
+        await SyncGenres(movie,x,isSeries,ct); await db.SaveChangesAsync(ct); return movie;
     }
 
-    private static readonly Movie[] FallbackCatalog =
-    [
-        new() { TmdbId = 693134, Title = "Дюна: Часть вторая", OriginalTitle = "Dune: Part Two", Overview = "Пол Атрейдес объединяется с фрименами в войне против дома Харконненов.", ReleaseDate = "2024-02-27", RuntimeMinutes = 166, VoteAverage = 8.3, Popularity = 100, PosterPath = "/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg", BackdropPath = "/8b8R8l88Qje9dn9OE8PY05Nxl1X.jpg", DetailsState = "ready" },
-        new() { TmdbId = 872585, Title = "Оппенгеймер", OriginalTitle = "Oppenheimer", Overview = "История физика Роберта Оппенгеймера и создания атомной бомбы.", ReleaseDate = "2023-07-19", RuntimeMinutes = 180, VoteAverage = 8.1, Popularity = 99, PosterPath = "/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg", BackdropPath = "/fm6KqXpk3M2HVveHwCrBSSBaO0V.jpg", DetailsState = "ready" },
-        new() { TmdbId = 157336, Title = "Интерстеллар", OriginalTitle = "Interstellar", Overview = "Команда исследователей отправляется через червоточину в поисках нового дома для человечества.", ReleaseDate = "2014-11-05", RuntimeMinutes = 169, VoteAverage = 8.4, Popularity = 98, PosterPath = "/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg", BackdropPath = "/pbrkL804c8yAv3zBZR4QPEafpAR.jpg", DetailsState = "ready" },
-        new() { TmdbId = 335984, Title = "Бегущий по лезвию 2049", OriginalTitle = "Blade Runner 2049", Overview = "Офицер К раскрывает тайну, способную погрузить общество в хаос.", ReleaseDate = "2017-10-04", RuntimeMinutes = 164, VoteAverage = 7.9, Popularity = 94, PosterPath = "/gajva2L0rPYkEWjzgFlBXCAVBE5.jpg", BackdropPath = "/ilrZsKbcurEznKKaUNRZTrM4BKM.jpg", DetailsState = "ready" },
-        new() { TmdbId = 475557, Title = "Джокер", OriginalTitle = "Joker", Overview = "История превращения неудачливого комика Артура Флека в Джокера.", ReleaseDate = "2019-10-01", RuntimeMinutes = 122, VoteAverage = 8.0, Popularity = 93, PosterPath = "/udDclJoHjfjb8Ekgsd4FDteOkCU.jpg", BackdropPath = "/n6bUvigpRFqSwmPp1m2YADdbRBc.jpg", DetailsState = "ready" },
-        new() { TmdbId = 496243, Title = "Паразиты", OriginalTitle = "Parasite", Overview = "Семья бедняков хитростью проникает в дом богатой семьи.", ReleaseDate = "2019-05-30", RuntimeMinutes = 132, VoteAverage = 8.2, Popularity = 92, PosterPath = "/7IiTTgloJzvGI1TAYymCfbfl3vT.jpg", BackdropPath = "/TU9NIjwzjoKPwQHoHshkFcQUCG.jpg", DetailsState = "ready" },
-        new() { TmdbId = 27205, Title = "Начало", OriginalTitle = "Inception", Overview = "Вор, крадущий идеи через сны, получает невыполнимое задание.", ReleaseDate = "2010-07-15", RuntimeMinutes = 148, VoteAverage = 8.4, Popularity = 91, PosterPath = "/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg", BackdropPath = "/s3TBrRGB1iav7gFOCNx3H31MoES.jpg", DetailsState = "ready" },
-        new() { TmdbId = 603, Title = "Матрица", OriginalTitle = "The Matrix", Overview = "Хакер Нео узнаёт, что привычный мир — иллюзия.", ReleaseDate = "1999-03-30", RuntimeMinutes = 136, VoteAverage = 8.2, Popularity = 90, PosterPath = "/f5uNbUC76oowt5mt5J9QlqrIYQ6.jpg", BackdropPath = "/icmmSD4vTTDKOq2vvdulafOGw93.jpg", DetailsState = "ready" },
-        new() { TmdbId = 106646, Title = "Волк с Уолл-стрит", OriginalTitle = "The Wolf of Wall Street", Overview = "Возвышение и падение Джордана Белфорта — короля брокеров.", ReleaseDate = "2013-12-25", RuntimeMinutes = 180, VoteAverage = 8.0, Popularity = 88, PosterPath = "/34m2tygAYBGqA9MXKhRDtzYd4MR.jpg", BackdropPath = "/cUJF8n4C4oiup9Dgrwx0Y5EK2pD.jpg", DetailsState = "ready" },
-        new() { TmdbId = 122, Title = "Властелин колец: Две крепости", OriginalTitle = "The Lord of the Rings: The Two Towers", Overview = "Братство разделилось, но путь к уничтожению кольца продолжается.", ReleaseDate = "2002-12-18", RuntimeMinutes = 179, VoteAverage = 8.4, Popularity = 87, PosterPath = "/5VTN0pR8gcqV3EPU7VgYdT4M6Y.jpg", BackdropPath = "/x2RS3uTcsJJ9IfjNPcgDmukoEcQ.jpg", DetailsState = "ready" }
-    ];
+    private async Task SyncGenres(Movie movie, JsonElement x, bool isSeries, CancellationToken ct)
+    {
+        var ids = new List<(int id,string? name)>();
+        if(x.TryGetProperty("genre_ids",out var rawIds)&&rawIds.ValueKind==JsonValueKind.Array) ids.AddRange(rawIds.EnumerateArray().Select(v=>(v.GetInt32(),(string?)null)));
+        if(x.TryGetProperty("genres",out var rawGenres)&&rawGenres.ValueKind==JsonValueKind.Array) ids.AddRange(rawGenres.EnumerateArray().Where(v=>v.TryGetProperty("id",out _)).Select(v=>(v.GetProperty("id").GetInt32(),String(v,"name"))));
+        foreach(var (genreId,name) in ids.DistinctBy(v=>v.id))
+        {
+            var genre=await db.Genres.FindAsync([genreId],ct);
+            if(genre is null){genre=new Genre{TmdbId=genreId,Name=name??GenreNames.GetValueOrDefault(genreId)??genreId.ToString(),Slug=Slug(name??GenreNames.GetValueOrDefault(genreId)??genreId.ToString()),IsSeries=isSeries};db.Genres.Add(genre);}
+            else if(!string.IsNullOrWhiteSpace(name)){genre.Name=name;genre.Slug=Slug(name);}
+            if(movie.MovieGenres.All(g=>g.GenreId!=genreId)) movie.MovieGenres.Add(new MovieGenre{TmdbId=movie.TmdbId,IsSeries=movie.IsSeries,GenreId=genreId,Movie=movie,Genre=genre});
+        }
+    }
+    private static string? String(JsonElement x,string key)=>x.TryGetProperty(key,out var v)&&v.ValueKind==JsonValueKind.String?v.GetString():null;
+    private static string? NonEmpty(string? value)=>string.IsNullOrWhiteSpace(value)?null:value;
+    private static double? Number(JsonElement x,string key)=>x.TryGetProperty(key,out var v)&&v.ValueKind==JsonValueKind.Number&&v.TryGetDouble(out var n)?n:null;
+    private static int? Integer(JsonElement x,string key)=>x.TryGetProperty(key,out var v)&&v.ValueKind==JsonValueKind.Number&&v.TryGetInt32(out var n)?n:null;
+    private static int? FirstRuntime(JsonElement x)=>x.TryGetProperty("episode_run_time",out var r)&&r.ValueKind==JsonValueKind.Array?r.EnumerateArray().Select(v=>v.TryGetInt32(out var n)?(int?)n:null).FirstOrDefault(n=>n>0):null;
+    private static string Slug(string value)=>Regex.Replace(value.ToLowerInvariant(),"[^a-z0-9а-яё]+","-").Trim('-');
+    private static readonly Dictionary<int,string> GenreNames=new(){{28,"Боевик"},{12,"Приключения"},{16,"Анимация"},{35,"Комедия"},{80,"Криминал"},{99,"Документальный"},{18,"Драма"},{10751,"Семейный"},{14,"Фэнтези"},{36,"История"},{27,"Ужасы"},{10402,"Музыка"},{9648,"Детектив"},{10749,"Мелодрама"},{878,"Фантастика"},{10770,"Телевизионный фильм"},{53,"Триллер"},{10752,"Военный"},{37,"Вестерн"},{10759,"Боевик и приключения"},{10762,"Детский"},{10763,"Новости"},{10764,"Реалити"},{10765,"Фантастика и фэнтези"},{10766,"Мыльная опера"},{10767,"Ток-шоу"},{10768,"Война и политика"}};
 }

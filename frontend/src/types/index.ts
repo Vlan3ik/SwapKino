@@ -1,57 +1,47 @@
-// Типы данных СвайпКино
+export type GenreName = string;
 
-export type Genre =
-  | "Ужасы"
-  | "Драма"
-  | "Фантастика"
-  | "Боевик"
-  | "Триллер"
-  | "Криминал"
-  | "Комедия"
-  | "Романтика"
-  | "Приключения"
-  | "Фэнтези"
-  | "Мультфильмы"
-  | "Детектив"
-  | "Семейный"
-  | "История"
-  | "Военный"
-  | "Музыка"
-  | "Документальный"
-  | "Эпик"
-  | "Сериал";
+export interface Genre {
+  id: number;
+  slug: string;
+  name: GenreName;
+}
 
 export interface Person {
   id: number;
   name: string;
   role: string;
-  photoUrl?: string;
+  photoUrl?: string | null;
 }
 
 export interface Movie {
   id: number;
   title: string;
-  originalTitle: string;
-  year: number;
-  genres: Genre[];
-  rating: number;
-  duration: number;
-  posterUrl: string;
-  backdropUrl: string;
-  shortDescription: string;
-  description: string;
-  trailerYoutubeId: string;
-  watchUrl: string;
+  originalTitle: string | null;
+  year: number | null;
+  genres: GenreName[];
+  genreItems: Genre[];
+  rating: number | null;
+  duration: number | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  shortDescription: string | null;
+  description: string | null;
+  trailerYoutubeId: string | null;
+  watchUrl: string | null;
   cast: Person[];
   directors: Person[];
   writers: Person[];
+  images: string[];
   type: "film" | "series";
+  detailsState?: string | null;
 }
 
 export interface FilmReel {
   id: string;
+  slug: string;
   title: string;
   subtitle: string;
-  genre: Genre;
-  movieIds: number[];
+  genres: GenreName[];
+  strategy?: string;
+  coverUrl?: string | null;
 }

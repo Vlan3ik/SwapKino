@@ -14,6 +14,7 @@ class CaptchaSession:
     include_unrated: bool
     collected_items: list[object]
     page_number: int
+    pages_total: int | None
     vnc_token: str
     expires_at: datetime
 
@@ -49,7 +50,7 @@ class CaptchaSessionStore:
         temporary.write_text("".join(f"{session.vnc_token}: localhost:5900\n" for session in self._sessions.values()), encoding="utf-8")
         temporary.replace(self.token_file)
 
-    def add(self, driver: object, source_url: str, include_unrated: bool, collected_items: list[object] | None = None, page_number: int = 1) -> CaptchaSession:
+    def add(self, driver: object, source_url: str, include_unrated: bool, collected_items: list[object] | None = None, page_number: int = 1, pages_total: int | None = None) -> CaptchaSession:
         with self._lock:
             self._cleanup_locked()
             session = CaptchaSession(
@@ -59,6 +60,7 @@ class CaptchaSessionStore:
                 include_unrated=include_unrated,
                 collected_items=collected_items or [],
                 page_number=page_number,
+                pages_total=pages_total,
                 vnc_token=secrets.token_urlsafe(32),
                 expires_at=datetime.now(timezone.utc) + self.ttl,
             )

@@ -1,12 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
 import { Heart, Star, Clock, Trash2, Play } from "lucide-react";
-import { useAppStore } from "@/lib/store";
+import { contentKey, useAppStore } from "@/lib/store";
 
 export function FavoritesView() {
-  const { movies, favorites, toggleFavorite, openMovie, setView } = useAppStore();
-  const favMovies = movies.filter((m) => favorites.includes(m.id));
+  const router = useRouter();
+  const { movies, favorites, toggleFavorite } = useAppStore();
+  const favMovies = movies.filter((m) => favorites.includes(contentKey(m.id, m.type === "series")));
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
@@ -25,7 +27,7 @@ export function FavoritesView() {
         </div>
         {favMovies.length > 0 && (
           <button
-            onClick={() => setView({ name: "feed" })}
+            onClick={() => router.push("/")}
             className="text-sm text-rating hover:underline"
           >
             ← В ленту
@@ -44,7 +46,7 @@ export function FavoritesView() {
             свайпай вправо те фильмы, которые хочешь посмотреть.
           </p>
           <button
-            onClick={() => setView({ name: "feed" })}
+            onClick={() => router.push("/")}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black font-semibold text-sm hover:bg-rating transition-colors"
           >
             Открыть Ленту
@@ -54,28 +56,28 @@ export function FavoritesView() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {favMovies.map((m, i) => (
             <motion.div
-              key={m.id}
+              key={contentKey(m.id, m.type === "series")}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: i * 0.04 }}
               className="group cursor-pointer"
-              onClick={() => openMovie(m.id)}
+              onClick={() => router.push(`/movie/${m.id}${m.type === "series" ? "?series=1" : ""}`)}
             >
               <div className="relative aspect-[2/3] rounded-xl overflow-hidden border border-white/10 shadow-card-glow">
-                <img
+                {m.posterUrl && <img
                   src={m.posterUrl}
                   alt={m.title}
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                />
+                />}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-80 group-hover:opacity-100 transition-opacity" />
 
                 {/* Рейтинг */}
-                <div className="absolute top-2 right-2 bg-black/70 backdrop-blur px-2 py-1 rounded-md flex items-center gap-1 border border-white/10">
+                {m.rating != null && <div className="absolute top-2 right-2 bg-black/70 backdrop-blur px-2 py-1 rounded-md flex items-center gap-1 border border-white/10">
                   <Star className="h-3 w-3 text-rating" fill="currentColor" />
                   <span className="text-xs font-bold text-rating tabular-nums">
                     {m.rating.toFixed(1)}
                   </span>
-                </div>
+                </div>}
 
                 {/* Лайк индикатор */}
                 <div className="absolute top-2 left-2 h-8 w-8 rounded-full bg-like text-black flex items-center justify-center">
@@ -86,7 +88,7 @@ export function FavoritesView() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggleFavorite(m.id);
+                    toggleFavorite(m.id, m.type === "series");
                   }}
                   className="absolute bottom-2 right-2 h-8 w-8 rounded-full bg-black/70 backdrop-blur text-white hover:bg-skip hover:text-black flex items-center justify-center border border-white/10 transition-colors opacity-0 group-hover:opacity-100"
                   aria-label="Убрать из избранного"
@@ -100,18 +102,17 @@ export function FavoritesView() {
                     {m.title}
                   </h3>
                   <div className="flex items-center gap-2 text-[10px] text-white/60">
-                    <span>{m.year}</span>
-                    <span className="w-1 h-1 rounded-full bg-white/30" />
-                    <span className="flex items-center gap-0.5">
+                    {m.year && <span>{m.year}</span>}
+                    {m.duration && <span className="flex items-center gap-0.5">
                       <Clock className="h-2.5 w-2.5" />
                       {m.duration < 60
                         ? `${m.duration}м`
                         : `${Math.floor(m.duration / 60)}ч`}
-                    </span>
+                    </span>}
                   </div>
 
                   {/* Смотреть */}
-                  <a
+                  {m.watchUrl && <a
                     href={m.watchUrl}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -120,7 +121,7 @@ export function FavoritesView() {
                   >
                     <Play className="h-3 w-3" fill="currentColor" />
                     Смотреть
-                  </a>
+                  </a>}
                 </div>
               </div>
             </motion.div>
