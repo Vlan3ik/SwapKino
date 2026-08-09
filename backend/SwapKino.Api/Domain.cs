@@ -83,6 +83,8 @@ public record MovieSummaryDto(int Id, int TmdbId, bool IsSeries, string Title, s
 public sealed record MovieDetailsDto(int Id, int TmdbId, bool IsSeries, string Title, string? OriginalTitle, string? Tagline, string? Overview, string? ReleaseDate, int? Runtime, double? Rating, int VoteCount, IReadOnlyList<GenreDto> Genres, string? PosterUrl, string? BackdropUrl, string DetailsState, object[] Cast, object[] Crew, object[] Trailers, object[] Images, object? WatchProviders)
     : MovieSummaryDto(Id, TmdbId, IsSeries, Title, OriginalTitle, Tagline, Overview, ReleaseDate, Runtime, Rating, VoteCount, Genres, PosterUrl, BackdropUrl, DetailsState);
 
+public sealed record LibraryCursor(DateTime UpdatedAt, double? UserRating, string? Text, int TmdbId, bool IsSeries);
+
 public static class MovieDto
 {
     private static string? Image(string? path, string size) => string.IsNullOrWhiteSpace(path) ? null : $"https://image.tmdb.org/t/p/{size}{path}";

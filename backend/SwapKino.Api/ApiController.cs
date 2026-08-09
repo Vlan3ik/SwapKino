@@ -71,6 +71,100 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
     [HttpGet("auth/me")][Authorize]
     public async Task<IActionResult> Me() { var user=await users.FindByIdAsync(UserId.ToString()); return user is null?Unauthorized():Ok(new{id=user.Id,email=user.Email,displayName=user.DisplayName,createdAt=user.CreatedAt}); }
+    [HttpGet("profile")][Authorize]
+    public async Task<IActionResult> Profile(CancellationToken ct)
+    {
+        var user = await users.FindByIdAsync(UserId.ToString());
+        if (user is null) return Unauthorized();
+        var states = db.UserMovieStates.AsNoTracking().Where(x => x.UserId == UserId);
+        var favoritesCount = await states.CountAsync(x => x.Favorite, ct);
+        var ratingsCount = await states.CountAsync(x => x.Rating != null, ct);
+        var watchedCount = await states.CountAsync(x => x.Watched, ct);
+        var libraryCount = await states.CountAsync(ct);
+        var averageRating = await states.Where(x => x.Rating != null).Select(x => x.Rating).AverageAsync(ct) ?? 0;
+        var favoritePreview = await LibraryItems(states.Where(x => x.Favorite), "recent", 5, ct);
+        var ratingPreview = await LibraryItems(states.Where(x => x.Rating != null), "rating", 5, ct);
+        return Ok(new
+        {
+            user = new { id = user.Id, email = user.Email, displayName = user.DisplayName, createdAt = user.CreatedAt },
+            statistics = new { favoritesCount, ratingsCount, watchedCount, libraryCount, averageRating = Math.Round(averageRating, 2) },
+            previews = new { favorites = favoritePreview, ratings = ratingPreview }
+        });
+    }
+
+    [HttpGet("favorites")][Authorize]
+    public Task<IActionResult> Favorites([FromQuery] LibraryQuery query, CancellationToken ct) => UserLibrary(query, favorite: true, ct);
+
+    [HttpGet("ratings")][Authorize]
+    public Task<IActionResult> Ratings([FromQuery] LibraryQuery query, CancellationToken ct) => UserLibrary(query, favorite: false, ct);
+
+    private async Task<IActionResult> UserLibrary(LibraryQuery request, bool favorite, CancellationToken ct)
+    {
+        if (request.Limit is < 1 or > 50) return ValidationProblem("Limit должен быть от 1 до 50");
+        if (request.Page is < 1 or > 500) return ValidationProblem("Страница должна быть от 1 до 500");
+        var sort = string.IsNullOrWhiteSpace(request.Sort) ? "recent" : request.Sort.ToLowerInvariant();
+        if (sort is not ("recent" or "oldest" or "rating" or "title" or "newest")) return ValidationProblem("Неподдерживаемая сортировка");
+        var after = ParseLibraryCursor(request.Cursor);
+        if (request.Cursor is not null && after is null) return ValidationProblem("Некорректный cursor");
+        var genreIds = ParseGenreIds(request.GenreIds);
+        var states = db.UserMovieStates.AsNoTracking().Where(x => x.UserId == UserId && (favorite ? x.Favorite : x.Rating != null));
+        states = states.Where(x => db.Movies.Any(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries));
+        if (!string.IsNullOrWhiteSpace(request.Q))
+        {
+            var term = request.Q.Trim().ToLower();
+            states = states.Where(x => db.Movies.Any(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries && (m.Title.ToLower().Contains(term) || (m.OriginalTitle != null && m.OriginalTitle.ToLower().Contains(term)))));
+        }
+        if (genreIds.Length > 0) states = states.Where(x => db.MovieGenres.Any(g => g.TmdbId == x.TmdbId && g.IsSeries == x.IsSeries && genreIds.Contains(g.GenreId)));
+        if (request.MinRating is not null) states = states.Where(x => db.Movies.Any(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries && m.VoteAverage >= request.MinRating && m.VoteCount > 0));
+        if (request.YearFrom is not null) states = states.Where(x => db.Movies.Any(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries && m.ReleaseDate != null && string.Compare(m.ReleaseDate, request.YearFrom + "-01-01") >= 0));
+        if (request.YearTo is not null) states = states.Where(x => db.Movies.Any(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries && m.ReleaseDate != null && string.Compare(m.ReleaseDate, request.YearTo + "-12-31") <= 0));
+        if (request.IsSeries is not null) states = states.Where(x => x.IsSeries == request.IsSeries);
+
+        var totalCount = await states.CountAsync(ct);
+        if (after is not null) states = ApplyLibraryCursor(states, after, sort);
+        states = sort switch
+        {
+            "rating" => states.OrderByDescending(x => x.Rating).ThenByDescending(x => x.UpdatedAt).ThenBy(x => x.TmdbId).ThenBy(x => x.IsSeries),
+            "oldest" => states.OrderBy(x => x.UpdatedAt).ThenBy(x => x.TmdbId).ThenBy(x => x.IsSeries),
+            "title" => states.OrderBy(x => db.Movies.Where(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries).Select(m => m.Title).FirstOrDefault()).ThenBy(x => x.TmdbId).ThenBy(x => x.IsSeries),
+            "newest" => states.OrderByDescending(x => db.Movies.Where(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries).Select(m => m.ReleaseDate).FirstOrDefault()).ThenBy(x => x.TmdbId).ThenBy(x => x.IsSeries),
+            _ => states.OrderByDescending(x => x.UpdatedAt).ThenBy(x => x.TmdbId).ThenBy(x => x.IsSeries)
+        };
+        if (after is null && request.Page > 1) states = states.Skip((request.Page - 1) * request.Limit);
+        var rows = await states.Take(request.Limit + 1).ToListAsync(ct);
+        var hasNext = rows.Count > request.Limit;
+        if (hasNext) rows.RemoveAt(rows.Count - 1);
+        var movies = await LightweightMovies(db.Movies.AsNoTracking().Where(x => rows.Select(s => s.TmdbId).Contains(x.TmdbId))).ToListAsync(ct);
+        var items = rows.Select(state => LibraryItem(state, movies.FirstOrDefault(movie => movie.TmdbId == state.TmdbId && movie.IsSeries == state.IsSeries))).Where(x => x is not null).ToArray();
+        var nextCursor = hasNext && rows.Count > 0 ? MakeLibraryCursor(rows[^1], sort, movies) : null;
+        return Ok(new { items, page = request.Page, pageSize = request.Limit, totalCount, totalPages = (int)Math.Ceiling(totalCount / (double)request.Limit), hasNextPage = hasNext, nextCursor });
+    }
+
+    private async Task<object[]> LibraryItems(IQueryable<UserMovieState> states, string sort, int limit, CancellationToken ct)
+    {
+        var rows = await states.OrderByDescending(x => x.UpdatedAt).Take(limit).ToListAsync(ct);
+        var movies = await LightweightMovies(db.Movies.AsNoTracking().Where(x => rows.Select(s => s.TmdbId).Contains(x.TmdbId))).ToListAsync(ct);
+        return rows.Select(state => LibraryItem(state, movies.FirstOrDefault(movie => movie.TmdbId == state.TmdbId && movie.IsSeries == state.IsSeries))).Where(x => x is not null).Cast<object>().ToArray();
+    }
+
+    private static object? LibraryItem(UserMovieState state, Movie? movie) => movie is null ? null : new { state.TmdbId, state.IsSeries, state.Rating, state.Favorite, state.Watched, state.UpdatedAt, movie = MovieDto.Summary(movie) };
+
+    private static int[] ParseGenreIds(string? value) => (value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(x => int.TryParse(x, out var id) ? id : 0).Where(x => x > 0).Distinct().ToArray();
+    private static LibraryCursor? ParseLibraryCursor(string? cursor) { if (string.IsNullOrWhiteSpace(cursor)) return null; try { return JsonSerializer.Deserialize<LibraryCursor>(Encoding.UTF8.GetString(Convert.FromBase64String(cursor))); } catch { return null; } }
+    private IQueryable<UserMovieState> ApplyLibraryCursor(IQueryable<UserMovieState> query, LibraryCursor cursor, string sort) => sort switch
+    {
+        "rating" => query.Where(x => x.Rating < cursor.UserRating || x.Rating == cursor.UserRating && (x.UpdatedAt < cursor.UpdatedAt || x.UpdatedAt == cursor.UpdatedAt && (x.TmdbId > cursor.TmdbId || x.TmdbId == cursor.TmdbId && x.IsSeries && !cursor.IsSeries))),
+        "oldest" => query.Where(x => x.UpdatedAt > cursor.UpdatedAt || x.UpdatedAt == cursor.UpdatedAt && (x.TmdbId > cursor.TmdbId || x.TmdbId == cursor.TmdbId && x.IsSeries && !cursor.IsSeries)),
+        "title" => query.Where(x => string.Compare(db.Movies.Where(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries).Select(m => m.Title).FirstOrDefault(), cursor.Text) > 0 || db.Movies.Where(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries).Select(m => m.Title).FirstOrDefault() == cursor.Text && (x.TmdbId > cursor.TmdbId || x.TmdbId == cursor.TmdbId && x.IsSeries && !cursor.IsSeries)),
+        "newest" => query.Where(x => string.Compare(db.Movies.Where(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries).Select(m => m.ReleaseDate).FirstOrDefault(), cursor.Text) < 0 || db.Movies.Where(m => m.TmdbId == x.TmdbId && m.IsSeries == x.IsSeries).Select(m => m.ReleaseDate).FirstOrDefault() == cursor.Text && (x.TmdbId > cursor.TmdbId || x.TmdbId == cursor.TmdbId && x.IsSeries && !cursor.IsSeries)),
+        _ => query.Where(x => x.UpdatedAt < cursor.UpdatedAt || x.UpdatedAt == cursor.UpdatedAt && (x.TmdbId > cursor.TmdbId || x.TmdbId == cursor.TmdbId && x.IsSeries && !cursor.IsSeries))
+    };
+    private static string MakeLibraryCursor(UserMovieState state, string sort, IReadOnlyCollection<Movie> movies)
+    {
+        var movie = movies.FirstOrDefault(x => x.TmdbId == state.TmdbId && x.IsSeries == state.IsSeries);
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new LibraryCursor(state.UpdatedAt, state.Rating, movie?.Title, state.TmdbId, state.IsSeries))));
+    }
+
     [HttpGet("movies")][AllowAnonymous]
     public async Task<IActionResult> Movies([FromQuery]string? cursor=null,[FromQuery]int limit=20,[FromQuery]int page=0,[FromQuery]string? q=null,[FromQuery]string? genreIds=null,[FromQuery]double? minRating=null,[FromQuery]int? yearFrom=null,[FromQuery]int? yearTo=null,[FromQuery]bool? isSeries=null,[FromQuery]string sort="popular",CancellationToken ct=default)
     {
@@ -415,6 +509,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
 }
 public sealed record RegisterRequest(string Email,string Password,string? DisplayName); public sealed record LoginRequest(string Email,string Password); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey,bool IsSeries=false); public sealed record ImportRequest(string ProfileUrl);
+public sealed record LibraryQuery(string? Cursor = null, int Limit = 20, int Page = 1, string? Q = null, string? GenreIds = null, double? MinRating = null, int? YearFrom = null, int? YearTo = null, bool? IsSeries = null, string? Sort = "recent");
 public sealed record MovieKey(int TmdbId,bool IsSeries);
 public sealed record CatalogCursor(double Number,int Votes,string? Text,int Id,bool IsSeries);
 public sealed record ReelDefinition(string Slug,string Title,string Description,int[] Genres,string Strategy="genres",bool? IsSeries=false,int? MaxRuntime=null,int? YearBefore=null);

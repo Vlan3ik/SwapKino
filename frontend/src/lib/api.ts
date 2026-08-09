@@ -24,6 +24,42 @@ export interface ApiLibraryItem {
   suppressedUntil?: string | null;
 }
 
+export interface ApiLibraryPage {
+  items: ApiLibraryItem[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  nextCursor?: string | null;
+}
+
+export interface LibraryQuery {
+  cursor?: string | null;
+  page?: number;
+  limit?: number;
+  q?: string;
+  genreIds?: number[];
+  minRating?: number;
+  yearFrom?: number;
+  yearTo?: number;
+  isSeries?: boolean;
+  sort?: "recent" | "oldest" | "rating" | "title" | "newest";
+  signal?: AbortSignal;
+}
+
+export interface ApiProfile {
+  user: ApiUser;
+  statistics: {
+    favoritesCount: number;
+    ratingsCount: number;
+    watchedCount: number;
+    libraryCount: number;
+    averageRating: number;
+  };
+  previews: { favorites: ApiLibraryItem[]; ratings: ApiLibraryItem[] };
+}
+
 export interface ApiMovie {
   id: number;
   tmdbId: number;
@@ -222,6 +258,7 @@ export const api = {
   login: (payload: { email: string; password: string }) =>
     request<AuthResponse>("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<ApiUser>("/auth/me"),
+  profile: () => request<ApiProfile>("/profile"),
   movies: (query: CatalogQuery | number = {}) => {
     const normalized: CatalogQuery = typeof query === "number" ? { cursor: query > 1 ? String(query) : undefined } : query;
     const params = new URLSearchParams();
@@ -242,6 +279,8 @@ export const api = {
   recommendations: (page = 1) =>
     request<{ page: number; results: ApiMovie[] }>(`/recommendations?page=${page}`),
   library: () => request<{ items: ApiLibraryItem[] }>("/library"),
+  favorites: (query: LibraryQuery = {}) => request<ApiLibraryPage>(`/favorites?${libraryParams(query)}`, { signal: query.signal }),
+  ratings: (query: LibraryQuery = {}) => request<ApiLibraryPage>(`/ratings?${libraryParams(query)}`, { signal: query.signal }),
   reels: () => request<{ items?: ApiReel[]; results?: ApiReel[] } | ApiReel[]>("/reels"),
   reelFeed: (slug: string, cursor?: string | null, limit = 20) => {
     const params = new URLSearchParams({ limit: String(limit) });
@@ -265,6 +304,21 @@ export const api = {
   importCancel: (id: string) => request<ImportStatus>(`/imports/${id}/cancel`, { method: "POST" }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
 };
+
+function libraryParams(query: LibraryQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  if (query.cursor) params.set("cursor", query.cursor);
+  params.set("page", String(query.page ?? 1));
+  params.set("limit", String(query.limit ?? 20));
+  if (query.q) params.set("q", query.q);
+  if (query.genreIds?.length) params.set("genreIds", query.genreIds.join(","));
+  if (query.minRating != null) params.set("minRating", String(query.minRating));
+  if (query.yearFrom != null) params.set("yearFrom", String(query.yearFrom));
+  if (query.yearTo != null) params.set("yearTo", String(query.yearTo));
+  if (query.isSeries != null) params.set("isSeries", String(query.isSeries));
+  if (query.sort) params.set("sort", query.sort);
+  return params;
+}
 
 export function mapApiMovie(movie: ApiMovie): Movie {
   const payload = movie.payload ?? {};

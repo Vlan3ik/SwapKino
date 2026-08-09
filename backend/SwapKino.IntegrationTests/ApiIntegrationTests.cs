@@ -187,6 +187,29 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Profile_favorites_and_ratings_are_paginated_and_include_statistics()
+    {
+        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="profile@example.test",password="IntegrationPass123!",displayName="Profile"})).Content.ReadFromJsonAsync<JsonElement>();
+        client.DefaultRequestHeaders.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",auth.GetProperty("accessToken").GetString());
+        await using(var scope=factory.Services.CreateAsyncScope())
+        {
+            var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
+            db.Movies.AddRange(new Movie{TmdbId=778,Title="Profile favorite",VoteAverage=8,VoteCount=100,ReleaseDate="2024-01-01"},new Movie{TmdbId=779,Title="Profile rating",VoteAverage=7,VoteCount=90,ReleaseDate="2023-01-01"});
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=778,actionType="favorite",idempotencyKey="profile-favorite"})).StatusCode);
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=779,actionType="rating",value=9,idempotencyKey="profile-rating"})).StatusCode);
+        var profile=await client.GetFromJsonAsync<JsonElement>("/api/v1/profile");
+        Assert.Equal(1,profile.GetProperty("statistics").GetProperty("favoritesCount").GetInt32());
+        Assert.Equal(1,profile.GetProperty("statistics").GetProperty("ratingsCount").GetInt32());
+        Assert.Equal(1,profile.GetProperty("previews").GetProperty("favorites").GetArrayLength());
+        var ratings=await client.GetFromJsonAsync<JsonElement>("/api/v1/ratings?limit=1&minRating=6&sort=rating");
+        Assert.Equal(1,ratings.GetProperty("totalCount").GetInt32());
+        Assert.Equal(9,ratings.GetProperty("items")[0].GetProperty("rating").GetDouble());
+        Assert.Equal("Profile rating",ratings.GetProperty("items")[0].GetProperty("movie").GetProperty("title").GetString());
+    }
+
+    [Fact]
     public async Task Summary_upsert_never_erases_detail_payload_or_runtime()
     {
         await using var scope=factory.Services.CreateAsyncScope();var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
