@@ -15,9 +15,7 @@ interface MoviePlayerProps {
 }
 
 const PROVIDERS = [
-  { key: "alloha", label: "AllohaTV" },
   { key: "vibix", label: "Vibix" },
-  { key: "turbo", label: "Turbo" },
 ] as const;
 
 function providerKey(value: string) {
@@ -104,7 +102,7 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
         <Play className="h-5 w-5 fill-current" /> Смотреть
       </h2>
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-black shadow-cinematic">
-        <div role="tablist" aria-label="Источник видео" className="grid grid-cols-3 gap-px border-b border-white/10 bg-white/10 p-px">
+        <div role="tablist" aria-label="Источник видео" className="grid grid-cols-1 gap-px border-b border-white/10 bg-white/10 p-px">
           {sources.map((source) => (
             <button
               key={source.key}
