@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, Clock, Heart, Info, Star, X } from "lucide-react";
-import { motion, PanInfo, useMotionValue, useTransform } from "framer-motion";
+import { AnimatePresence, motion, PanInfo, useMotionValue, useTransform } from "framer-motion";
 import { api, getToken, mapApiMovie, mapApiReel } from "@/lib/api";
 import { filmReels, getReelMovies } from "@/lib/movies";
 import { useAppStore } from "@/lib/store";
 import type { FilmReel, Movie } from "@/types";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { preloadImages } from "@/lib/image-preload";
 
 export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => void }) {
   const catalog = useAppStore((state) => state.movies);
@@ -25,7 +26,7 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
 
   useEffect(() => {
     let active = true; setLoading(true);
-    api.reelFeed(reelId).then((response) => { if (!active) return; const mapped = (response.items ?? response.results ?? []).map(mapApiMovie); setReel(mapApiReel(response.reel)); setMovies(mapped); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active && fallbackReel) setMovies(getReelMovies(fallbackReel, catalog)); }).finally(() => { if (active) setLoading(false); });
+    api.reelFeed(reelId).then(async (response) => { if (!active) return; const mapped = (response.items ?? response.results ?? []).map(mapApiMovie); await preloadMovies(mapped); if (!active) return; setReel(mapApiReel(response.reel)); setMovies(mapped); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active && fallbackReel) setMovies(getReelMovies(fallbackReel, catalog)); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [reelId]);
 
@@ -46,13 +47,13 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
   useEffect(() => {
     if (index < movies.length - 4 || !nextCursor) return;
     const cursor = nextCursor; setNextCursor(null);
-    void api.reelFeed(reelId, cursor).then((response) => { const incoming = (response.items ?? response.results ?? []).map(mapApiMovie); setMovies((rows) => merge(rows, incoming)); setNextCursor(response.nextCursor ?? null); });
+    void api.reelFeed(reelId, cursor).then(async (response) => { const incoming = (response.items ?? response.results ?? []).map(mapApiMovie); await preloadMovies(incoming); setMovies((rows) => merge(rows, incoming)); setNextCursor(response.nextCursor ?? null); });
   }, [index, movies.length, nextCursor, reelId]);
 
   if (loading && !current) return <Status text="Собираем персональную киноплёнку…"/>;
   if (!reel || !current) return <Status text={index ? "Киноплёнка закончилась" : "В этой киноплёнке пока нет фильмов"} back/>;
   return <div className="relative">
-    {current.backdropUrl && <div className="fixed inset-0 pointer-events-none"><img key={`${current.type}:${current.id}`} src={current.backdropUrl} alt="" className="h-full w-full object-cover opacity-45"/><div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/60 to-background"/></div>}
+    <div className="fixed inset-0 pointer-events-none overflow-hidden"><AnimatePresence initial={false} mode="sync"><motion.img key={`${current.type}:${current.id}`} src={current.backdropUrl ?? current.posterUrl ?? undefined} alt="" initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: .42, scale: 1 }} exit={{ opacity: 0, scale: 1.02 }} transition={{ duration: .65, ease: "easeOut" }} className="absolute inset-0 h-full w-full object-cover"/></AnimatePresence><div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/65 to-background"/></div>
     <div className="relative z-10"><div className="flex items-center justify-between mb-4"><Link href="/" onClick={onExit} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-white"><ChevronLeft className="h-4 w-4"/>К киноплёнкам</Link><div className="text-right"><h1 className="font-semibold">{reel.title}</h1><p className="text-xs text-muted-foreground">{reel.subtitle}</p></div></div>
       <div className="relative mx-auto max-w-md h-[min(620px,calc(100vh-260px))] min-h-[430px]">{movies[index + 2] && <Layer movie={movies[index + 2]} className="scale-90 opacity-30"/>}{movies[index + 1] && <Layer movie={movies[index + 1]} className="scale-95 opacity-60"/>}<SwipeCard key={`${current.type}:${current.id}`} movie={current} favorite={isFavorite(current.id, current.type === "series")} committing={committing} onCommit={commit}/></div>
       <div className="mt-6 flex justify-center items-center gap-4"><Action label="Пропустить" className="h-16 w-16 text-skip border-skip/40" disabled={Boolean(committing)} onClick={() => commit("left")}><X className="h-7 w-7"/></Action><Link aria-label="Подробнее" href={`/movie/${current.id}${current.type === "series" ? "?series=1" : ""}`} className="h-12 w-12 rounded-full border border-white/20 grid place-items-center hover:bg-white hover:text-black"><Info className="h-5 w-5"/></Link><Action label="В избранное" className="h-16 w-16 text-like border-like/40" disabled={Boolean(committing)} onClick={() => commit("right")}><Heart className="h-7 w-7"/></Action></div>
@@ -76,3 +77,4 @@ function Action({ label, onClick, disabled, className, children }: { label: stri
 function Status({ text, back }: { text: string; back?: boolean }) { return <div className="py-24 text-center text-muted-foreground"><p>{text}</p>{back && <Link href="/" className="mt-4 inline-block text-rating">К киноплёнкам</Link>}</div>; }
 function formatDuration(value: number) { const hours = Math.floor(value / 60); const minutes = value % 60; return hours ? `${hours} ч${minutes ? ` ${minutes} мин` : ""}` : `${minutes} мин`; }
 function merge(current: Movie[], incoming: Movie[]) { const map = new Map(current.map((movie) => [`${movie.type}:${movie.id}`, movie])); incoming.forEach((movie) => map.set(`${movie.type}:${movie.id}`, movie)); return [...map.values()]; }
+function preloadMovies(movies: Movie[]) { return preloadImages(movies.slice(0, 8).flatMap((movie) => [movie.posterUrl, movie.backdropUrl])); }
