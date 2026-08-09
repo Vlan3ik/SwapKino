@@ -150,6 +150,7 @@ export interface MoviePage {
 
 export interface CatalogQuery {
   cursor?: string | null;
+  page?: number;
   limit?: number;
   q?: string;
   genreIds?: number[];
@@ -263,6 +264,7 @@ export const api = {
     const normalized: CatalogQuery = typeof query === "number" ? { cursor: query > 1 ? String(query) : undefined } : query;
     const params = new URLSearchParams();
     if (normalized.cursor) params.set("cursor", normalized.cursor);
+    if (normalized.page != null) params.set("page", String(normalized.page));
     params.set("limit", String(normalized.limit ?? 20));
     if (normalized.q) params.set("q", normalized.q);
     if (normalized.genreIds?.length) params.set("genreIds", normalized.genreIds.join(","));

@@ -10,22 +10,13 @@ import { useAppStore } from "@/lib/store";
 import type { Movie } from "@/types";
 import { cn } from "@/lib/utils";
 import { ArtworkImage } from "@/components/common/ArtworkImage";
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 const GENRE_IDS: Record<string, number> = { "Боевик":28, "Анимация":16, "Биография":36, "Вестерн":37, "Военный":10752, "Детектив":9648, "Документальный":99, "Драма":18, "История":36, "Комедия":35, "Криминал":80, "Мелодрама":10749, "Музыка":10402, "Приключения":12, "Семейный":10751, "Триллер":53, "Ужасы":27, "Фантастика":878, "Фэнтези":14 };
 const MAX_YEAR = new Date().getFullYear();
-const MAX_RESTORE_PAGES = 20;
-
-function restoredPageCount(value: string | null) {
+function pageNumber(value: string | null) {
   const parsed = Number(value ?? 1);
-  return Number.isFinite(parsed) ? Math.min(MAX_RESTORE_PAGES, Math.max(1, Math.floor(parsed))) : 1;
-}
-
-function scrollStorageKey() {
-  return `catalog-scroll:${window.location.pathname}${window.location.search}`;
-}
-
-function currentLocationKey() {
-  return `${window.location.pathname}${window.location.search}`;
+  return Number.isFinite(parsed) ? Math.max(1, Math.floor(parsed)) : 1;
 }
 
 export function CatalogView() {
@@ -35,18 +26,12 @@ export function CatalogView() {
   const [search, setSearch] = useState(initialQuery);
   const [items, setItems] = useState<Movie[]>([]);
   const [total, setTotal] = useState(0);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadedPages, setLoadedPages] = useState(() => restoredPageCount(params.get("pages")));
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const observerTarget = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
   const initialAbort = useRef<AbortController | null>(null);
-  const loadMoreInFlight = useRef(false);
-  const claimedCursor = useRef<string | null>(null);
-  const loadMoreRef = useRef<() => void>(() => undefined);
 
   const genresParam = params.get("genres") ?? "";
   const genres = useMemo(() => genresParam.split(",").filter(Boolean), [genresParam]);
@@ -55,11 +40,12 @@ export function CatalogView() {
   const yearTo = Number(params.get("to") || MAX_YEAR);
   const type = params.get("type") ?? "all";
   const sort = params.get("sort") ?? "popular";
+  const page = pageNumber(params.get("page"));
 
-  const replaceParams = useCallback((changes: Record<string, string | null>, resetPages = true) => {
+  const replaceParams = useCallback((changes: Record<string, string | null>, resetPage = true) => {
     const next = new URLSearchParams(window.location.search);
     Object.entries(changes).forEach(([key, value]) => value ? next.set(key, value) : next.delete(key));
-    if (resetPages) next.delete("pages");
+    if (resetPage) next.delete("page");
     router.replace(`/catalog${next.size ? `?${next}` : ""}`, { scroll: false });
   }, [router]);
 
@@ -85,7 +71,6 @@ export function CatalogView() {
     sort,
     limit: 20,
   }), [initialQuery, genres, minRating, yearFrom, yearTo, type, sort]);
-  const queryKey = JSON.stringify(query);
 
   const loadInitial = useCallback(async () => {
     initialAbort.current?.abort();
@@ -94,85 +79,29 @@ export function CatalogView() {
     const id = ++requestId.current;
     setLoading(true); setError(null);
     try {
-      let cursor: string | null = null;
-      const collected: Movie[] = [];
-      let count = 0;
-      let pagesLoaded = 0;
-      const pagesToRestore = restoredPageCount(new URLSearchParams(window.location.search).get("pages"));
-      for (let page = 0; page < pagesToRestore; page += 1) {
-        const response = await api.movies({ ...query, cursor, signal: controller.signal });
-        if (id !== requestId.current) return;
-        collected.push(...moviePageItems(response).map(mapApiMovie));
-        count = response.totalCount;
-        cursor = response.nextCursor ?? null;
-        pagesLoaded += 1;
-        if (!cursor) break;
-      }
-      const unique = [...new Map(collected.map((movie) => [`${movie.type}:${movie.id}`, movie])).values()];
-      claimedCursor.current = null;
-      setItems(unique); setTotal(count); setNextCursor(cursor); setLoadedPages(Math.max(1, pagesLoaded));
-      useAppStore.setState((state) => ({ movies: mergeMovies(state.movies, unique) }));
-      if (pagesToRestore !== Number(new URLSearchParams(window.location.search).get("pages") || 1)) {
-        const url = new URL(window.location.href);
-        url.searchParams.set("pages", String(pagesToRestore));
-        window.history.replaceState({ ...window.history.state, catalog: { key: `${url.pathname}${url.search}`, pages: pagesToRestore, scrollY: 0 } }, "", `${url.pathname}${url.search}`);
-      }
-      const catalogState = window.history.state?.catalog;
-      const historyY = catalogState?.key === currentLocationKey() ? Number(catalogState.scrollY) : 0;
-      const y = Number.isFinite(historyY) && historyY > 0 ? historyY : Number(sessionStorage.getItem(scrollStorageKey()) || 0);
-      if (y > 0) requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top: y })));
+      const response = await api.movies({ ...query, page, signal: controller.signal });
+      if (id !== requestId.current) return;
+      const nextItems = moviePageItems(response).map(mapApiMovie);
+      setItems(nextItems);
+      setTotal(response.totalCount);
+      setTotalPages(response.totalPages ?? Math.max(1, Math.ceil(response.totalCount / (response.pageSize || query.limit || 20))));
+      useAppStore.setState((state) => ({ movies: mergeMovies(state.movies, nextItems) }));
     } catch (cause) {
       if ((cause as Error).name !== "AbortError" && id === requestId.current) setError(cause instanceof Error ? cause.message : "Не удалось загрузить каталог");
     } finally { if (id === requestId.current) setLoading(false); }
-  }, [query, queryKey]);
+  }, [page, query]);
 
   useEffect(() => {
     void loadInitial();
     return () => initialAbort.current?.abort();
   }, [loadInitial]);
 
-  const loadMore = useCallback(async () => {
-    if (!nextCursor || loadMoreInFlight.current || claimedCursor.current === nextCursor) return;
-    const cursor = nextCursor;
-    loadMoreInFlight.current = true;
-    claimedCursor.current = cursor;
-    setLoadingMore(true); setError(null);
-    try {
-      const response = await api.movies({ ...query, cursor });
-      const incoming = moviePageItems(response).map(mapApiMovie);
-      setItems((current) => [...new Map([...current, ...incoming].map((movie) => [`${movie.type}:${movie.id}`, movie])).values()]);
-      setNextCursor(response.nextCursor ?? null);
-      setLoadedPages((current) => {
-        const next = Math.min(MAX_RESTORE_PAGES, current + 1);
-        const url = new URL(window.location.href);
-        url.searchParams.set("pages", String(next));
-        const key = `${url.pathname}${url.search}`;
-        window.history.replaceState({ ...window.history.state, catalog: { key, pages: next, scrollY: window.scrollY } }, "", key);
-        return next;
-      });
-      useAppStore.setState((state) => ({ movies: mergeMovies(state.movies, incoming) }));
-    } catch (cause) {
-      claimedCursor.current = null;
-      setError(cause instanceof Error ? cause.message : "Не удалось загрузить следующую порцию");
-    } finally {
-      loadMoreInFlight.current = false;
-      setLoadingMore(false);
-    }
-  }, [nextCursor, query, queryKey]);
-
-  loadMoreRef.current = () => { void loadMore(); };
-
-  useEffect(() => {
-    const node = observerTarget.current;
-    if (!node) return;
-    const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) loadMoreRef.current(); }, { rootMargin: "500px" });
-    observer.observe(node); return () => observer.disconnect();
-  }, []);
-
-  const rememberScroll = () => {
-    const scrollY = window.scrollY;
-    sessionStorage.setItem(scrollStorageKey(), String(scrollY));
-    window.history.replaceState({ ...window.history.state, catalog: { key: currentLocationKey(), pages: loadedPages, scrollY } }, "", window.location.href);
+  const goToPage = (nextPage: number) => {
+    const bounded = Math.min(totalPages, Math.max(1, nextPage));
+    const next = new URLSearchParams(window.location.search);
+    if (bounded === 1) next.delete("page"); else next.set("page", String(bounded));
+    router.push(`/catalog${next.size ? `?${next}` : ""}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const toggleFavorite = useAppStore((state) => state.toggleFavorite);
   const isFavorite = useAppStore((state) => state.isFavorite);
@@ -192,10 +121,23 @@ export function CatalogView() {
       <button onClick={() => { setSearch(""); router.replace("/catalog", { scroll: false }); }} className="text-xs text-muted-foreground hover:text-white flex gap-1"><X className="h-3 w-3"/>Сбросить всё</button>
     </div>}
     {activeCount > 0 && <div className="flex flex-wrap gap-2 mb-5">{genres.map((genre) => <button key={genre} onClick={() => replaceParams({ genres: genres.filter((item) => item !== genre).join(",") || null })} className="rounded-full bg-white/8 px-3 py-1 text-xs">{genre} ×</button>)}</div>}
-    {loading ? <CatalogSkeleton/> : items.length === 0 && !error ? <Empty/> : <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">{items.map((movie) => <CatalogCard key={`${movie.type}:${movie.id}`} movie={movie} favorite={isFavorite(movie.id, movie.type === "series")} onFavorite={() => toggleFavorite(movie.id, movie.type === "series")} onOpen={rememberScroll}/>)}</div>}
-    {error && <div className="my-8 rounded-xl border border-skip/30 bg-skip/10 p-4 text-sm"><p>{error}</p><button onClick={() => items.length ? void loadMore() : void loadInitial()} className="mt-2 underline">Повторить</button></div>}
-    <div ref={observerTarget} className="h-16 flex items-center justify-center text-sm text-muted-foreground">{loadingMore ? "Загружаем ещё…" : nextCursor ? `Загружено ${items.length} из ${total}` : items.length ? "Это весь каталог" : null}</div>
+    {loading ? <CatalogSkeleton/> : items.length === 0 && !error ? <Empty/> : <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">{items.map((movie) => <CatalogCard key={`${movie.type}:${movie.id}`} movie={movie} favorite={isFavorite(movie.id, movie.type === "series")} onFavorite={() => toggleFavorite(movie.id, movie.type === "series")} onOpen={() => undefined}/>)}</div>}
+    {error && <div className="my-8 rounded-xl border border-skip/30 bg-skip/10 p-4 text-sm"><p>{error}</p><button onClick={() => void loadInitial()} className="mt-2 underline">Повторить</button></div>}
+    {!loading && totalPages > 1 && <CatalogPagination page={page} totalPages={totalPages} onChange={goToPage} />}
   </div>;
+}
+
+function CatalogPagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (page: number) => void }) {
+  const pages = new Set([1, totalPages, page - 2, page - 1, page, page + 1, page + 2].filter((value) => value >= 1 && value <= totalPages));
+  const visible = [...pages].sort((a, b) => a - b);
+  return <Pagination className="mt-9"><PaginationContent>
+    <PaginationItem><PaginationPrevious href="#catalog" onClick={(event) => { event.preventDefault(); if (page > 1) onChange(page - 1); }} /></PaginationItem>
+    {visible.map((value, index) => <span key={value} className="contents">
+      {index > 0 && value - visible[index - 1] > 1 && <PaginationItem><PaginationEllipsis /></PaginationItem>}
+      <PaginationItem><PaginationLink href={`#page-${value}`} isActive={value === page} onClick={(event) => { event.preventDefault(); if (value !== page) onChange(value); }}>{value}</PaginationLink></PaginationItem>
+    </span>)}
+    <PaginationItem><PaginationNext href="#catalog" onClick={(event) => { event.preventDefault(); if (page < totalPages) onChange(page + 1); }} /></PaginationItem>
+  </PaginationContent></Pagination>;
 }
 
 function CatalogCard({ movie, favorite, onFavorite, onOpen }: { movie: Movie; favorite: boolean; onFavorite: () => void; onOpen: () => void }) {
