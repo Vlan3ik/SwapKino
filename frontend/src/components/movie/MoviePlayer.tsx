@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, Play, RotateCcw, TriangleAlert } from "lucide-react";
+import Script from "next/script";
 import { api, type ApiMoviePlayer } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +52,7 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
       setPlayers(items);
       const first = PROVIDERS.find((provider) => {
         const item = items.find((row) => providerKey(row.provider) === provider.key);
-        return item?.available && safeEmbedUrl(item.embedUrl);
+        return item?.available && (Boolean(item.embed) || Boolean(safeEmbedUrl(item.embedUrl)));
       });
       setActiveProvider(first?.key ?? null);
       setAvailability(first ? "available" : "unavailable");
@@ -66,17 +67,18 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
   const sources = useMemo(() => PROVIDERS.map((provider) => {
     const item = players.find((row) => providerKey(row.provider) === provider.key);
     const embedUrl = safeEmbedUrl(item?.embedUrl ?? null);
-    return { ...provider, embedUrl, available: Boolean(item?.available && embedUrl) };
+    return { ...provider, embedUrl, embed: item?.embed ?? null, available: Boolean(item?.available && (item.embed || embedUrl)) };
   }), [players]);
   const active = sources.find((source) => source.key === activeProvider && source.available) ?? null;
 
   useEffect(() => {
     if (!active) return;
-    setFrameState("loading");
+    setFrameState(active.embed ? "ready" : "loading");
+    if (active.embed) return;
     setSlow(false);
     const timeout = window.setTimeout(() => setSlow(true), 10_000);
     return () => window.clearTimeout(timeout);
-  }, [active?.key, frameAttempt]);
+  }, [active?.key, active?.embed?.id, frameAttempt]);
 
   const select = (key: string) => {
     const source = sources.find((row) => row.key === key);
@@ -153,7 +155,7 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
             <>
               {frameState !== "ready" && frameState !== "error" && <PlayerMessage icon={<LoaderCircle className="h-7 w-7 animate-spin" />} title={slow ? "Плеер загружается дольше обычного" : "Загружаем плеер…"} text={slow ? "Можно подождать или загрузить его ещё раз." : undefined} action={slow ? <Retry onClick={() => setFrameAttempt((value) => value + 1)} /> : undefined} />}
               {frameState === "error" && <PlayerMessage icon={<TriangleAlert className="h-7 w-7 text-skip" />} title="Плеер не загрузился" text="Попробуйте ещё раз или выберите другой источник." action={<Retry onClick={() => setFrameAttempt((value) => value + 1)} />} />}
-              <iframe
+              {active.embed ? <VibixEmbed embed={active.embed} /> : <iframe
                 key={`${active.key}:${frameAttempt}`}
                 src={active.embedUrl}
                 title={`${active.label}: ${title}`}
@@ -165,13 +167,17 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
                 onLoad={() => { setFrameState("ready"); setSlow(false); }}
                 onError={() => setFrameState("error")}
                 className={cn("absolute inset-0 h-full w-full border-0", frameState !== "ready" && "invisible")}
-              />
+              />}
             </>
           )}
         </div>
       </div>
     </section>
   );
+}
+
+function VibixEmbed({ embed }: { embed: { publisherId: string; type: string; id: string } }) {
+  return <><Script src="https://graphicslab.io/sdk/v2/rendex-sdk.min.js" strategy="afterInteractive" /><ins data-publisher-id={embed.publisherId} data-type={embed.type} data-id={embed.id} data-design="5" data-nopreload="true" data-width="100%" data-height="500px" className="block min-h-[280px] w-full" /></>;
 }
 
 function PlayerMessage({ icon, title, text, action }: { icon: React.ReactNode; title: string; text?: string; action?: React.ReactNode }) {

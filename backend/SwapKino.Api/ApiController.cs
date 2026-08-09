@@ -228,12 +228,12 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         try
         {
             var video = await vibix.FindAsync(movie, ct);
-            var available = !string.IsNullOrWhiteSpace(video?.IframeUrl);
-            return Ok(new { items = new[] { new { provider = "vibix", name = "Vibix", embedUrl = video?.IframeUrl, available } } });
+            var available = !string.IsNullOrWhiteSpace(video?.IframeUrl) || video?.Embed is not null;
+            return Ok(new { items = new[] { new { provider = "vibix", name = "Vibix", embedUrl = video?.IframeUrl, embed = video?.Embed, available } } });
         }
         catch (HttpRequestException)
         {
-            return Ok(new { items = new[] { new { provider = "vibix", name = "Vibix", embedUrl = (string?)null, available = false } } });
+            return Ok(new { items = new[] { new { provider = "vibix", name = "Vibix", embedUrl = (string?)null, embed = (VibixEmbed?)null, available = false } } });
         }
     }
     [HttpGet("recommendations")]

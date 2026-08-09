@@ -4,7 +4,8 @@ using System.Text.Json;
 
 namespace SwapKino.Api;
 
-public sealed record VibixVideo(string? IframeUrl, string? Name, string? Quality);
+public sealed record VibixEmbed(string PublisherId, string Type, string Id);
+public sealed record VibixVideo(string? IframeUrl, string? Name, string? Quality, VibixEmbed? Embed);
 
 public sealed class VibixClient(HttpClient http, IConfiguration config)
 {
@@ -25,7 +26,8 @@ public sealed class VibixClient(HttpClient http, IConfiguration config)
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var json = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
         var root = json.RootElement;
-        return new VibixVideo(String(root, "iframe_url"), String(root, "name"), String(root, "quality"));
+        var embedCode = String(root, "embed_code");
+        return new VibixVideo(String(root, "iframe_url"), String(root, "name"), String(root, "quality"), ParseEmbed(embedCode));
     }
 
     private static (string Kind, string? Id) FindExternalId(Movie movie)
@@ -49,4 +51,13 @@ public sealed class VibixClient(HttpClient http, IConfiguration config)
     }
 
     private static string? String(JsonElement node, string name) => node.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static VibixEmbed? ParseEmbed(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return null;
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(code, "data-(publisher-id|type|id)=[\\\"']([^\\\"']+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            values[match.Groups[1].Value] = match.Groups[2].Value;
+        return values.TryGetValue("publisher-id", out var publisherId) && values.TryGetValue("type", out var type) && values.TryGetValue("id", out var id) ? new VibixEmbed(publisherId, type, id) : null;
+    }
 }
