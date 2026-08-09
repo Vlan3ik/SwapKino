@@ -48,30 +48,18 @@ export function FilmReelCarousel() {
   const go = useCallback((direction: number) => setIndex((current) => reels.length ? (current + direction + reels.length) % reels.length : 0), [reels.length]);
   useEffect(() => { const onKey = (event: KeyboardEvent) => { if (event.key === "ArrowLeft") go(-1); if (event.key === "ArrowRight") go(1); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [go]);
   const visibleLimit = compact ? 1 : 2;
-  const cardWidth = compact ? Math.min(300, viewportWidth - 48) : Math.min(380, Math.max(300, viewportWidth * 0.24));
+  const cardWidth = compact ? Math.min(320, viewportWidth - 48) : Math.min(440, Math.max(340, viewportWidth * 0.27));
   const cardOffset = compact ? Math.min(260, cardWidth + 20) : Math.min(340, Math.max(220, (viewportWidth - cardWidth - 80) / 4));
   const visible = reels.map((item, itemIndex) => { let position = itemIndex - index; if (position > reels.length / 2) position -= reels.length; if (position < -reels.length / 2) position += reels.length; return { item, itemIndex, position }; }).filter(({ position }) => Math.abs(position) <= visibleLimit);
 
   return <section className="relative isolate min-h-[calc(100svh-5.5rem)] overflow-hidden rounded-3xl">
-    <BackgroundCrossfade reels={reels} index={index}/><div className="absolute inset-0 z-10 bg-gradient-to-b from-background/20 via-background/65 to-background"/>
+    <div className="absolute inset-0 z-10 bg-gradient-to-b from-background/20 via-background/65 to-background"/>
     <header className="relative z-20 flex items-end justify-between p-6 sm:p-9"><div><h1 className="text-3xl font-bold">Киноплёнки</h1><p className="text-sm text-muted-foreground mt-1">Выбери настроение, остальное мы соберём сами</p></div>{reels.length > 1 && !loading && !error && <div className="flex gap-2"><Arrow label="Предыдущая" onClick={() => go(-1)}><ChevronLeft/></Arrow><Arrow label="Следующая" onClick={() => go(1)}><ChevronRight/></Arrow></div>}</header>
     {loading ? <ReelsLoading/> : error ? <ReelsMessage title="Не удалось загрузить киноплёнки" text={error} onRetry={() => void load()}/> : reels.length === 0 ? <ReelsMessage title="Киноплёнок пока нет" text="Подборки ещё не настроены или временно недоступны." onRetry={() => void load()}/> :
     <motion.div drag="x" dragConstraints={{ left: 0, right: 0 }} dragElastic={0.15} onDragEnd={(_: unknown, info: PanInfo) => { if (info.offset.x < -80) go(1); if (info.offset.x > 80) go(-1); }} className="relative z-20 h-[calc(100svh-14rem)] min-h-[560px] flex items-center justify-center cursor-grab">
       {visible.map(({ item, itemIndex, position }) => <ReelCard key={item.slug} reel={item} position={position} cover={item.coverUrl} compact={compact} offset={cardOffset} width={cardWidth} onSide={() => setIndex(itemIndex)}/>) }
     </motion.div>}
   </section>;
-}
-
-function BackgroundCrossfade({ reels, index }: { reels: FilmReel[]; index: number }) {
-  useEffect(() => {
-    void preloadImages(reels.map((reel) => reel.coverUrl));
-  }, [reels]);
-  const current = reels[index]?.coverUrl;
-  const previous = reels[(index - 1 + reels.length) % reels.length]?.coverUrl;
-  return <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-background">
-    {previous && <img src={previous} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full scale-110 object-cover opacity-15 blur-2xl"/>}
-    {current && <motion.img key={current} initial={{ opacity: 0 }} animate={{ opacity: .25 }} transition={{ duration: .7, ease: "easeOut" }} src={current} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full scale-110 object-cover blur-2xl"/>}
-  </div>;
 }
 
 function ReelCard({ reel, position, cover, compact, offset, width, onSide }: { reel: FilmReel; position: number; cover: string | null | undefined; compact: boolean; offset: number; width: number; onSide: () => void }) {

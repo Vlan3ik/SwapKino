@@ -21,6 +21,7 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [committing, setCommitting] = useState<"left" | "right" | null>(null);
+  const [backdropMovie, setBackdropMovie] = useState<Movie | undefined>();
   const isFavorite = useAppStore((state) => state.isFavorite);
   const toggleFavorite = useAppStore((state) => state.toggleFavorite);
 
@@ -35,9 +36,11 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
     if (!current || committing) return;
     setCommitting(direction);
     if (getToken()) void api.action({ tmdbId: current.id, isSeries: current.type === "series", actionType: direction === "right" ? "swipe_right" : "swipe_left", idempotencyKey: `swipe:${current.type}:${current.id}:${Date.now()}` }).catch(() => undefined);
+    const nextMovie = movies[index + 1];
+    if (nextMovie) setBackdropMovie(nextMovie);
     if (direction === "right" && !isFavorite(current.id, current.type === "series")) { toggleFavorite(current.id, current.type === "series"); toast.success(`«${current.title}» в избранном`); }
     window.setTimeout(() => { setIndex((value) => value + 1); setCommitting(null); }, 260);
-  }, [current, committing, isFavorite, toggleFavorite]);
+  }, [current, committing, index, isFavorite, movies, toggleFavorite]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "ArrowLeft") commit("left"); if (event.key === "ArrowRight") commit("right"); };
@@ -53,7 +56,7 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
   if (loading && !current) return <Status text="Собираем персональную киноплёнку…"/>;
   if (!reel || !current) return <Status text={index ? "Киноплёнка закончилась" : "В этой киноплёнке пока нет фильмов"} back/>;
   return <div className="relative">
-    <div className="fixed inset-0 pointer-events-none overflow-hidden"><AnimatePresence initial={false} mode="sync"><motion.img key={`${current.type}:${current.id}`} src={current.backdropUrl ?? current.posterUrl ?? undefined} alt="" initial={{ opacity: 0, scale: 1.04 }} animate={{ opacity: .42, scale: 1 }} exit={{ opacity: 0, scale: 1.02 }} transition={{ duration: .65, ease: "easeOut" }} className="absolute inset-0 h-full w-full object-cover"/></AnimatePresence><div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/65 to-background"/></div>
+    <div className="fixed inset-0 pointer-events-none overflow-hidden"><AnimatePresence initial={false} mode="sync"><motion.img key={`${(backdropMovie ?? current).type}:${(backdropMovie ?? current).id}`} src={(backdropMovie ?? current).backdropUrl ?? (backdropMovie ?? current).posterUrl ?? undefined} alt="" initial={{ opacity: 0, scale: 1.035 }} animate={{ opacity: .46, scale: 1 }} exit={{ opacity: 0, scale: 1.015 }} transition={{ duration: .38, ease: "easeOut" }} className="absolute inset-0 h-full w-full object-cover"/></AnimatePresence><div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/65 to-background"/></div>
     <div className="relative z-10"><div className="flex items-center justify-between mb-4"><Link href="/" onClick={onExit} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-white"><ChevronLeft className="h-4 w-4"/>К киноплёнкам</Link><div className="text-right"><h1 className="font-semibold">{reel.title}</h1><p className="text-xs text-muted-foreground">{reel.subtitle}</p></div></div>
       <div className="relative mx-auto max-w-md h-[min(620px,calc(100vh-260px))] min-h-[430px]"><AnimatePresence initial={false} mode="sync">{movies[index + 2] && <Layer key={`layer:${movies[index + 2].type}:${movies[index + 2].id}`} movie={movies[index + 2]} className="scale-90 opacity-30"/>}{movies[index + 1] && <Layer key={`layer:${movies[index + 1].type}:${movies[index + 1].id}`} movie={movies[index + 1]} className="scale-95 opacity-60"/>}</AnimatePresence><SwipeCard key={`${current.type}:${current.id}`} movie={current} favorite={isFavorite(current.id, current.type === "series")} committing={committing} onCommit={commit}/></div>
       <div className="mt-6 flex justify-center items-center gap-4"><Action label="Пропустить" className="h-16 w-16 text-skip border-skip/40" disabled={Boolean(committing)} onClick={() => commit("left")}><X className="h-7 w-7"/></Action><Link aria-label="Подробнее" href={`/movie/${current.id}${current.type === "series" ? "?series=1" : ""}`} className="h-12 w-12 rounded-full border border-white/20 grid place-items-center hover:bg-white hover:text-black"><Info className="h-5 w-5"/></Link><Action label="В избранное" className="h-16 w-16 text-like border-like/40" disabled={Boolean(committing)} onClick={() => commit("right")}><Heart className="h-7 w-7"/></Action></div>
