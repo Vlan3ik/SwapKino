@@ -89,6 +89,8 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     expose: ["3000"]
     environment:
       NODE_ENV: production
