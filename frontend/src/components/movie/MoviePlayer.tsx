@@ -151,13 +151,13 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
           {availability === "loading" && <PlayerMessage icon={<LoaderCircle className="h-7 w-7 animate-spin" />} title="Ищем доступные источники…" />}
           {availability === "error" && <PlayerMessage icon={<TriangleAlert className="h-7 w-7 text-skip" />} title="Не удалось загрузить источники" text="Проверьте соединение и попробуйте ещё раз." action={<Retry onClick={() => void load()} />} />}
           {availability === "unavailable" && <PlayerMessage icon={<Play className="h-7 w-7" />} title="Просмотр пока недоступен" text="Для этого фильма нет доступных источников." />}
-          {active?.embedUrl && (
+          {(active?.embedUrl || active?.embed) && (
             <>
               {frameState !== "ready" && frameState !== "error" && <PlayerMessage icon={<LoaderCircle className="h-7 w-7 animate-spin" />} title={slow ? "Плеер загружается дольше обычного" : "Загружаем плеер…"} text={slow ? "Можно подождать или загрузить его ещё раз." : undefined} action={slow ? <Retry onClick={() => setFrameAttempt((value) => value + 1)} /> : undefined} />}
               {frameState === "error" && <PlayerMessage icon={<TriangleAlert className="h-7 w-7 text-skip" />} title="Плеер не загрузился" text="Попробуйте ещё раз или выберите другой источник." action={<Retry onClick={() => setFrameAttempt((value) => value + 1)} />} />}
               {active.embed ? <VibixEmbed embed={active.embed} /> : <iframe
                 key={`${active.key}:${frameAttempt}`}
-                src={active.embedUrl}
+                src={active.embedUrl ?? ""}
                 title={`${active.label}: ${title}`}
                 loading="lazy"
                 allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
