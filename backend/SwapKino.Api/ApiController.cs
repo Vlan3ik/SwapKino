@@ -14,7 +14,7 @@ using System.Security.Cryptography;
 namespace SwapKino.Api;
 [ApiController]
 [Route("api/v1")]
-public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IHttpClientFactory http, TmdbClient tmdb) : ControllerBase
+public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IHttpClientFactory http, TmdbClient tmdb, VibixClient vibix) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddHours(2),signingCredentials:creds)); }
@@ -213,6 +213,28 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             }
         }
         return Ok(MovieDto.Details(movie));
+    }
+    [HttpGet("movies/{id:int}/players")]
+    [AllowAnonymous]
+    public async Task<IActionResult> MoviePlayers(int id, [FromQuery] bool isSeries = false, CancellationToken ct = default)
+    {
+        var movie = await db.Movies.AsNoTracking().SingleOrDefaultAsync(x => x.TmdbId == id && x.IsSeries == isSeries, ct);
+        if (movie is null) return NotFound(new { message = "Фильм или сериал не найден в каталоге" });
+        if (movie.DetailsState != "ready" || !vibix.HasExternalId(movie))
+        {
+            try { movie = await tmdb.Details(id, ct, isSeries); }
+            catch (Exception ex) when (ex is HttpRequestException or JsonException) { }
+        }
+        try
+        {
+            var video = await vibix.FindAsync(movie, ct);
+            var available = !string.IsNullOrWhiteSpace(video?.IframeUrl);
+            return Ok(new { items = new[] { new { provider = "vibix", name = "Vibix", embedUrl = video?.IframeUrl, available } } });
+        }
+        catch (HttpRequestException)
+        {
+            return Ok(new { items = new[] { new { provider = "vibix", name = "Vibix", embedUrl = (string?)null, available = false } } });
+        }
     }
     [HttpGet("recommendations")]
     [Authorize]

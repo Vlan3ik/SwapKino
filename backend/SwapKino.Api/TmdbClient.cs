@@ -129,7 +129,7 @@ public sealed class TmdbClient(IHttpClientFactory factory, IConfiguration config
     {
         var path = isSeries ? $"/tv/{id}" : $"/movie/{id}";
         JsonDocument json;
-        try { json = await Get(path, new() { ["language"]="ru-RU", ["append_to_response"]="credits,videos,watch/providers,keywords,images", ["include_image_language"]="ru,en,null" }, ct); }
+        try { json = await Get(path, new() { ["language"]="ru-RU", ["append_to_response"]="credits,videos,watch/providers,keywords,images,external_ids", ["include_image_language"]="ru,en,null" }, ct); }
         catch (HttpRequestException)
         {
             var stale = await db.Movies.Include(x=>x.MovieGenres).ThenInclude(x=>x.Genre).SingleOrDefaultAsync(x=>x.TmdbId==id&&x.IsSeries==isSeries,ct);
