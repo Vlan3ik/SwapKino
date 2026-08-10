@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, Play, RotateCcw, TriangleAlert } from "lucide-react";
-import Script from "next/script";
 import { api, type ApiMoviePlayer } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +26,14 @@ function safeEmbedUrl(value: string | null): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    // Vibix's current videoframe2 certificate is expired. Keep the request
+    // pointed at Vibix, but let the local nginx proxy terminate TLS for the
+    // browser and validate the upstream response server-side.
+    if (url.hostname.endsWith(".videoframe2.com")) {
+      return `http://vibix.localhost${url.pathname}${url.search}`;
+    }
+    return url.toString();
   } catch {
     return null;
   }
@@ -155,19 +161,18 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
             <>
               {frameState !== "ready" && frameState !== "error" && <PlayerMessage icon={<LoaderCircle className="h-7 w-7 animate-spin" />} title={slow ? "Плеер загружается дольше обычного" : "Загружаем плеер…"} text={slow ? "Можно подождать или загрузить его ещё раз." : undefined} action={slow ? <Retry onClick={() => setFrameAttempt((value) => value + 1)} /> : undefined} />}
               {frameState === "error" && <PlayerMessage icon={<TriangleAlert className="h-7 w-7 text-skip" />} title="Плеер не загрузился" text="Попробуйте ещё раз или выберите другой источник." action={<Retry onClick={() => setFrameAttempt((value) => value + 1)} />} />}
-              {active.embed ? <VibixEmbed embed={active.embed} /> : <iframe
+              {active.embedUrl ? <iframe
                 key={`${active.key}:${frameAttempt}`}
                 src={active.embedUrl ?? ""}
                 title={`${active.label}: ${title}`}
                 loading="lazy"
                 allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                 allowFullScreen
-                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
                 referrerPolicy="no-referrer"
                 onLoad={() => { setFrameState("ready"); setSlow(false); }}
                 onError={() => setFrameState("error")}
                 className={cn("absolute inset-0 h-full w-full border-0", frameState !== "ready" && "invisible")}
-              />}
+              /> : active.embed ? <VibixEmbed embed={active.embed} /> : null}
             </>
           )}
         </div>
@@ -177,7 +182,7 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
 }
 
 function VibixEmbed({ embed }: { embed: { publisherId: string; type: string; id: string } }) {
-  return <><Script src="https://graphicslab.io/sdk/v2/rendex-sdk.min.js" strategy="afterInteractive" /><ins data-publisher-id={embed.publisherId} data-type={embed.type} data-id={embed.id} data-design="5" data-nopreload="true" data-width="100%" data-height="500px" className="block min-h-[280px] w-full" /></>;
+  return <ins data-publisher-id={embed.publisherId} data-type={embed.type} data-id={embed.id} data-design="1" data-width="100%" data-height="500px" className="block min-h-[280px] w-full" />;
 }
 
 function PlayerMessage({ icon, title, text, action }: { icon: React.ReactNode; title: string; text?: string; action?: React.ReactNode }) {

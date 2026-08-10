@@ -1,8 +1,9 @@
 "use client";
 
-import { Flame, Github, ExternalLink, Heart, FileText, Shield, ScrollText, Copyright } from "lucide-react";
+import { Github, ExternalLink, Heart, FileText, Shield, ScrollText, Copyright } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { BrandMark } from "./BrandMark";
 
 export function Footer() {
   return (
@@ -17,10 +18,7 @@ export function Footer() {
             >
               <div className="relative">
                 <div className="absolute inset-0 bg-rating/30 blur-lg rounded-full" />
-                <Flame
-                  className="relative h-6 w-6 text-rating"
-                  fill="currentColor"
-                />
+                <BrandMark className="relative h-6 w-6" />
               </div>
               <span className="text-lg font-bold tracking-tight">
                 СвайпКино

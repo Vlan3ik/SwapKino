@@ -24,7 +24,7 @@ API: `http://localhost:8000`, Swagger: `http://localhost:8000/swagger`.
 
 Для продакшена обязательно заменить `JWT_SECRET`, пароли PostgreSQL/MinIO и TMDB credentials через секрет-хранилище.
 
-Vibix настраивается через `VIBIX_API_KEY`. Backend ищет фильм или сериал через publisher catalog API (`POST /api/v1/publisher/catalog/data`) по сохранённым Kinopoisk/IMDb ID или названию, затем использует возвращённые `iframe_video_url`, `embed_code_new` и внутренний `iframe_video_id`. Токен хранится только в `.env`/секрет-хранилище и не включается в исходники.
+Vibix настраивается через `VIBIX_API_KEY`. Backend разрешает источник только по сохранённым Kinopoisk/IMDb ID через официальные `GET /api/v1/publisher/videos/kp/{id}` и `GET /api/v1/publisher/videos/imdb/{id}`. Готовый `iframe_url` имеет приоритет; если API вернул только publisher attributes, используется SDK с внешним `kp`/`imdb` ID. Поиск по названию и внутренний `iframe_video_id` в playback-пути не используются. Токен хранится только в `.env`/секрет-хранилище и не включается в исходники.
 # Контракт пользовательской библиотеки
 
 Авторизованный frontend может работать как тонкая панель управления API:

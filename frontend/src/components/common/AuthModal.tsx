@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Mail, Lock, User, Flame, Eye, EyeOff } from "lucide-react";
+import { X, Mail, Lock, User, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "./BrandMark";
 
 interface AuthModalProps {
   open: boolean;
@@ -117,7 +118,7 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
 
             {/* Лого */}
             <div className="flex items-center gap-2.5 mb-1">
-              <Flame className="h-7 w-7 text-rating" fill="currentColor" />
+              <BrandMark className="h-7 w-7" />
               <span className="text-xl font-bold tracking-tight">СвайпКино</span>
             </div>
 
