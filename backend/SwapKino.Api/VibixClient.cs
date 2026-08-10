@@ -116,7 +116,7 @@ public sealed class VibixClient(HttpClient http, IConfiguration config)
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(code, "data-(publisher-id|type|id)=[\\\"']([^\\\"']+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
             values[match.Groups[1].Value] = match.Groups[2].Value;
         return values.TryGetValue("publisher-id", out var publisherId) && values.TryGetValue("type", out var type) && values.TryGetValue("id", out var id)
-            ? new VibixEmbed(publisherId, type, id)
+            ? new VibixEmbed(publisherId, type.Equals("serial", StringComparison.OrdinalIgnoreCase) ? "series" : type, id)
             : null;
     }
 }
