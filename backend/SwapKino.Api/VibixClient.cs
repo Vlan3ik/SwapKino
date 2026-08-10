@@ -7,50 +7,107 @@ namespace SwapKino.Api;
 public sealed record VibixEmbed(string PublisherId, string Type, string Id);
 public sealed record VibixVideo(string? IframeUrl, string? Name, string? Quality, VibixEmbed? Embed);
 
+/// <summary>
+/// Vibix publisher API adapter. Vibix does not resolve TMDB ids directly: its
+/// publisher catalog is searched by Kinopoisk/IMDb/title and returns the
+/// internal iframe id or the ready-to-use player URL.
+/// </summary>
 public sealed class VibixClient(HttpClient http, IConfiguration config)
 {
-    public bool HasExternalId(Movie movie) => !string.IsNullOrWhiteSpace(FindExternalId(movie).Id);
+    public bool HasExternalId(Movie movie) => movie.TmdbId > 0 || movie.KinopoiskId is not null || !string.IsNullOrWhiteSpace(movie.ImdbId);
 
     public async Task<VibixVideo?> FindAsync(Movie movie, CancellationToken ct)
     {
         var token = config["VIBIX_API_KEY"];
         if (string.IsNullOrWhiteSpace(token)) return null;
-        var (kind, id) = FindExternalId(movie);
-        if (string.IsNullOrWhiteSpace(id)) return null;
-        var path = kind == "imdb" ? $"api/v1/publisher/videos/imdb/{Uri.EscapeDataString(id)}" : $"api/v1/publisher/videos/kp/{Uri.EscapeDataString(id)}";
-        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+
+        var searches = new[] { movie.ImdbId, movie.KinopoiskId?.ToString(), movie.Title }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var search in searches)
+        {
+            var response = await SearchCatalogAsync(search!, token, ct);
+            var row = FindRow(response, movie);
+            if (row is not null)
+            {
+                var video = ToVideo(row.Value);
+                if (video is not null) return video;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<JsonDocument?> SearchCatalogAsync(string search, string token, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/publisher/catalog/data");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["draw"] = "1",
+            ["start"] = "0",
+            ["length"] = "30",
+            ["search[value]"] = search,
+            ["search[regex]"] = "false"
+        });
+
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if ((int)response.StatusCode >= 300 && (int)response.StatusCode < 400) return null;
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest or HttpStatusCode.MethodNotAllowed or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) return null;
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        using var json = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-        var root = json.RootElement;
-        var embedCode = String(root, "embed_code");
-        return new VibixVideo(String(root, "iframe_url"), String(root, "name"), String(root, "quality"), ParseEmbed(embedCode));
+        try { return await JsonDocument.ParseAsync(stream, cancellationToken: ct); }
+        catch (JsonException) { return null; }
     }
 
-    private static (string Kind, string? Id) FindExternalId(Movie movie)
+    private static JsonElement? FindRow(JsonDocument? response, Movie movie)
     {
-        try
-        {
-            using var document = JsonDocument.Parse(movie.Payload);
-            var root = document.RootElement;
-            if (root.TryGetProperty("external_ids", out var external))
-            {
-                var imdb = String(external, "imdb_id");
-                if (!string.IsNullOrWhiteSpace(imdb)) return ("imdb", imdb);
-                var kp = String(external, "kinopoisk_id") ?? String(external, "kp_id");
-                if (!string.IsNullOrWhiteSpace(kp)) return ("kp", kp);
-            }
-            var payloadImdb = String(root, "imdb_id");
-            if (!string.IsNullOrWhiteSpace(payloadImdb)) return ("imdb", payloadImdb);
-        }
-        catch (JsonException) { }
-        return ("", null);
+        if (response is null || !response.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return null;
+        var rows = data.EnumerateArray().ToArray();
+        var imdb = movie.ImdbId?.Trim();
+        var kp = movie.KinopoiskId?.ToString();
+        var exact = rows.FirstOrDefault(row =>
+            (!string.IsNullOrWhiteSpace(imdb) && string.Equals(Text(row, "imdb_id"), imdb, StringComparison.OrdinalIgnoreCase)) ||
+            (!string.IsNullOrWhiteSpace(kp) && Text(row, "kp_id") == kp));
+        if (exact.ValueKind != JsonValueKind.Undefined) return exact;
+
+        var title = Normalize(movie.Title);
+        return rows.FirstOrDefault(row =>
+            Normalize(Text(row, "name", "name_rus", "name_original")) == title ||
+            Normalize(Text(row, "name", "name_rus", "name_original")).Contains(title, StringComparison.Ordinal) ||
+            title.Contains(Normalize(Text(row, "name", "name_rus", "name_original")), StringComparison.Ordinal));
     }
 
-    private static string? String(JsonElement node, string name) => node.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    private static VibixVideo? ToVideo(JsonElement row)
+    {
+        var embedCode = Text(row, "embed_code_new", "embed_code");
+        var iframeUrl = Text(row, "iframe_video_url") ?? (Uri.TryCreate(embedCode, UriKind.Absolute, out _) ? embedCode : null);
+        var embed = ParseEmbed(embedCode);
+        var iframeId = Text(row, "iframe_video_id");
+        if (embed is null && !string.IsNullOrWhiteSpace(iframeId))
+        {
+            var publisherId = Text(row, "publisher_id");
+            if (!string.IsNullOrWhiteSpace(publisherId)) embed = new VibixEmbed(publisherId, Text(row, "type") == "serial" ? "series" : "movie", iframeId);
+        }
+        if (string.IsNullOrWhiteSpace(iframeUrl) && embed is null) return null;
+        return new VibixVideo(iframeUrl, Text(row, "name", "name_rus", "name_original"), Text(row, "quality"), embed);
+    }
+
+    private static string? Text(JsonElement node, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!node.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) continue;
+            if (value.ValueKind == JsonValueKind.String) return value.GetString();
+            if (value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False) return value.ToString();
+        }
+        return null;
+    }
+
+    private static string Normalize(string? value) => string.IsNullOrWhiteSpace(value)
+        ? string.Empty
+        : new string(value.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
 
     private static VibixEmbed? ParseEmbed(string? code)
     {
@@ -58,6 +115,8 @@ public sealed class VibixClient(HttpClient http, IConfiguration config)
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(code, "data-(publisher-id|type|id)=[\\\"']([^\\\"']+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
             values[match.Groups[1].Value] = match.Groups[2].Value;
-        return values.TryGetValue("publisher-id", out var publisherId) && values.TryGetValue("type", out var type) && values.TryGetValue("id", out var id) ? new VibixEmbed(publisherId, type, id) : null;
+        return values.TryGetValue("publisher-id", out var publisherId) && values.TryGetValue("type", out var type) && values.TryGetValue("id", out var id)
+            ? new VibixEmbed(publisherId, type, id)
+            : null;
     }
 }

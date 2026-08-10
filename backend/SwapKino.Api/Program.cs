@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Threading.RateLimiting;
 using StackExchange.Redis;
+using Minio;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
@@ -51,7 +52,10 @@ builder.Services.AddRateLimiter(options =>
 var redisUrl = config["REDIS_URL"] ?? "redis-runtime:6379,abortConnect=false";
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisUrl));
 builder.Services.AddSignalR().AddStackExchangeRedis(redisUrl);
-builder.Services.AddStackExchangeRedisCache(options => options.Configuration = config["REDIS_CACHE_URL"] ?? "redis-cache:6379,abortConnect=false"); builder.Services.AddHttpClient("tmdb", c => c.BaseAddress = new Uri((config["TMDB_BASE_URL"] ?? "https://api.themoviedb.org/3").TrimEnd('/') + "/")); builder.Services.AddHttpClient("selenium", c => c.BaseAddress = new Uri(config["SELENIUM_URL"] ?? "http://selenium-service:8081")); builder.Services.AddHttpClient<VibixClient>(c => c.BaseAddress = new Uri("https://vibix.org/")); builder.Services.AddScoped<TmdbClient>(); builder.Services.AddHostedService<CatalogWarmupService>(); builder.Services.AddHostedService<CatalogEnrichmentService>(); builder.Services.AddHostedService<EventsStreamRelay>(); builder.Services.AddControllers(); builder.Services.AddEndpointsApiExplorer(); builder.Services.AddSwaggerGen();
+builder.Services.AddStackExchangeRedisCache(options => options.Configuration = config["REDIS_CACHE_URL"] ?? "redis-cache:6379,abortConnect=false"); builder.Services.AddHttpClient("tmdb", c => c.BaseAddress = new Uri((config["TMDB_BASE_URL"] ?? "https://api.themoviedb.org/3").TrimEnd('/') + "/")); builder.Services.AddHttpClient("selenium", c => c.BaseAddress = new Uri(config["SELENIUM_URL"] ?? "http://selenium-service:8081")); builder.Services.AddHttpClient<VibixClient>(c => c.BaseAddress = new Uri(config["VIBIX_BASE_URL"] ?? "https://vibix.org/")).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+var minioEndpoint = config["MINIO_ENDPOINT"] ?? "minio:9000";
+builder.Services.AddSingleton<IMinioClient>(_ => new MinioClient().WithEndpoint(minioEndpoint).WithCredentials(config["MINIO_ACCESS_KEY"] ?? "minio", config["MINIO_SECRET_KEY"] ?? "minio-secret-change-me").WithSSL(config.GetValue("MINIO_USE_SSL", false)).Build());
+builder.Services.AddSingleton<AvatarStorage>(); builder.Services.AddScoped<TmdbClient>(); builder.Services.AddHostedService<CatalogWarmupService>(); builder.Services.AddHostedService<CatalogEnrichmentService>(); builder.Services.AddHostedService<EventsStreamRelay>(); builder.Services.AddControllers(); builder.Services.AddEndpointsApiExplorer(); builder.Services.AddSwaggerGen();
 var corsOrigins = config["CORS_ORIGINS"]?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? ["http://localhost:3000"];
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
 var app = builder.Build();

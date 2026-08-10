@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SwapKino.Api;
@@ -11,9 +12,11 @@ using SwapKino.Api;
 namespace SwapKino.Api.Migrations
 {
     [DbContext(typeof(SwapKinoDbContext))]
-    partial class SwapKinoDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260810074703_ProfileAndCatalogSync")]
+    partial class ProfileAndCatalogSync
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

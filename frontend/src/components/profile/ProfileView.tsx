@@ -1,61 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   User,
-  Link2,
   Star,
   Heart,
   Film,
-  CheckCircle2,
-  Loader2,
   Sparkles,
   LogIn,
   UserPlus,
   ChevronRight,
+  Settings,
 } from "lucide-react";
 import { contentKey, parseContentKey, useAppStore } from "@/lib/store";
-import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { AuthModal } from "@/components/common/AuthModal";
-import { api } from "@/lib/api";
 
 export function ProfileView() {
   const router = useRouter();
   const { user, movies, favorites, ratings } = useAppStore();
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [kpLink, setKpLink] = useState("");
-  const [syncing, setSyncing] = useState(false);
-  const [synced, setSynced] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importId, setImportId] = useState<string | null>(null);
-  const [importState, setImportState] = useState<{ status: string; progress: number; importedCount?: number; error?: string | null; captcha?: { novncUrl?: string | null; screenshotBase64?: string | null; screenshotMimeType?: string | null; message?: string | null } | null } | null>(null);
-
-  useEffect(() => {
-    if (!importId) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const next = await api.importStatus(importId);
-        if (!cancelled) {
-          setImportState(next);
-          if (next.status === "Completed") {
-            setSyncing(false);
-            setSynced(true);
-          } else if (["WaitingForUser", "Failed", "Cancelled"].includes(next.status)) {
-            setSyncing(false);
-          }
-        }
-      } catch {
-        if (!cancelled) setSyncing(false);
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 2000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [importId]);
 
   const favMovies = movies.filter((m) => favorites.includes(contentKey(m.id, m.type === "series")));
   const ratedEntries = Object.entries(ratings)
@@ -75,29 +41,6 @@ export function ProfileView() {
     setAuthOpen(true);
   };
 
-  const handleSync = async () => {
-    if (!kpLink.trim()) return;
-    setSyncing(true);
-    setImportError(null);
-    try {
-      const started = await api.importProfile(kpLink.trim());
-      setImportId(started.id);
-      setImportState({ status: started.status, progress: started.progress });
-      setSynced(false);
-    } catch (error) {
-      setSyncing(false);
-      const apiError = error as Error & { status?: number; data?: unknown };
-      const details = apiError.data as { id?: string; status?: string; message?: string } | undefined;
-      if (apiError.status === 409 && details?.id) {
-        setImportId(details.id);
-        setImportState({ status: details.status ?? "Running", progress: 0 });
-        setImportError("Этот импорт уже выполняется — подключил отображение его текущего состояния.");
-      } else {
-        setImportError(apiError.message || "Не удалось запустить импорт");
-      }
-    }
-  };
-
   return (
     <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-6 space-y-8">
       {/* Шапка профиля */}
@@ -114,11 +57,9 @@ export function ProfileView() {
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ type: "spring", stiffness: 200, damping: 15 }}
-              className="h-20 w-20 rounded-full bg-gradient-to-br from-rating/80 to-skip/60 flex items-center justify-center border border-white/10 shadow-cinematic"
+              className="h-20 w-20 rounded-full bg-gradient-to-br from-rating/80 to-skip/60 flex items-center justify-center border border-white/10 shadow-cinematic overflow-hidden"
             >
-              <span className="text-3xl font-bold text-black">
-                {user.username[0]?.toUpperCase()}
-              </span>
+              {user.avatarUrl ? <img src={user.avatarUrl} alt="Аватар профиля" className="h-full w-full object-cover" /> : <span className="text-3xl font-bold text-black">{user.username[0]?.toUpperCase()}</span>}
             </motion.div>
             <div className="flex-1">
               <h1 className="text-2xl font-bold">{user.username}</h1>
@@ -132,6 +73,9 @@ export function ProfileView() {
                 })}
               </p>
             </div>
+            <button type="button" onClick={() => router.push("/profile/settings")} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm font-semibold transition hover:border-rating/50 hover:bg-rating/10">
+              <Settings className="h-4 w-4 text-rating" /> Настройки
+            </button>
           </div>
         </motion.div>
       ) : (
@@ -204,120 +148,6 @@ export function ProfileView() {
           label="Оценок поставлено"
         />
       </div>
-
-      {/* Синхронизация с Кинопоиском (только для залогиненных) */}
-      {user && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="glass-panel rounded-2xl p-5 sm:p-6"
-        >
-          <div className="flex items-start justify-between gap-3 mb-4">
-            <div>
-              <h2 className="text-lg font-bold flex items-center gap-2">
-                <Link2 className="h-4 w-4 text-rating" />
-                Синхронизация с Кинопоиском
-              </h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                Вставь ссылку на публичный профиль Кинопоиска — сервис
-                импортирует твои оценки и подстроит рекомендации.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            <input
-              type="url"
-              value={kpLink}
-              onChange={(e) => setKpLink(e.target.value)}
-              placeholder="https://kinopoisk.ru/user/..."
-              className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-2.5 text-sm placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-rating/30"
-            />
-            <button
-              onClick={handleSync}
-              disabled={!kpLink.trim() || syncing}
-              className={cn(
-                "px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all",
-                syncing
-                  ? "bg-white/10 text-muted-foreground"
-                  : synced
-                  ? "bg-like text-black"
-                  : "bg-white text-black hover:bg-rating"
-              )}
-            >
-              {syncing ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Синхронизация…
-                </>
-              ) : synced ? (
-                <>
-                  <CheckCircle2 className="h-4 w-4" />
-                  Готово
-                </>
-              ) : (
-                "Импортировать"
-              )}
-            </button>
-          </div>
-
-          {synced && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              className="mt-3 text-xs text-like flex items-center gap-1.5"
-            >
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Оценки успешно импортированы. Рекомендации адаптированы.
-            </motion.div>
-          )}
-
-          {importError && (
-            <div className="mt-3 rounded-xl border border-skip/20 bg-skip/10 px-3 py-2 text-xs text-skip">
-              {importError}
-            </div>
-          )}
-
-          {importState && !synced && (
-            <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold">
-                    {importState.status === "WaitingForUser" ? "Нужно пройти проверку Кинопоиска" : `Импорт: ${importState.status}`}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {importState.status === "WaitingForUser" ? "Открой интерактивное окно, заверши CAPTCHA и нажми продолжить." : `Прогресс: ${importState.progress}%${importState.importedCount ? ` · импортировано ${importState.importedCount}` : ""}`}
-                  </p>
-                </div>
-                {importState.status === "WaitingForUser" && importState.captcha?.novncUrl && (
-                  <button
-                    type="button"
-                    onClick={() => window.open(importState.captcha?.novncUrl ?? "", "_blank", "noopener,noreferrer")}
-                    className="shrink-0 rounded-lg bg-rating px-3 py-2 text-xs font-bold text-black hover:bg-rating/80"
-                  >
-                    Открыть CAPTCHA
-                  </button>
-                )}
-              </div>
-              {importState.status === "WaitingForUser" && importState.captcha?.screenshotBase64 && (
-                <img
-                  src={`data:${importState.captcha.screenshotMimeType ?? "image/png"};base64,${importState.captcha.screenshotBase64}`}
-                  alt="Состояние проверки Кинопоиска"
-                  className="max-h-48 w-full rounded-lg border border-white/10 object-contain"
-                />
-              )}
-              {(importState.status === "WaitingForUser" || importState.status === "Failed") && importId && (
-                <div className="flex gap-2">
-                  <button type="button" disabled={syncing} onClick={async () => { setSyncing(true); setImportError(null); try { const next = await api.importResume(importId); setImportState(next); } catch (cause) { setSyncing(false); setImportError(cause instanceof Error ? cause.message : "Не удалось продолжить импорт"); } }} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-black hover:bg-rating disabled:opacity-50">{syncing ? "Продолжаем…" : "Продолжить импорт"}</button>
-                  {importState.status === "WaitingForUser" && <button type="button" onClick={async () => { try { const next = await api.importCancel(importId); setImportState(next); setSyncing(false); } catch { /* следующая проверка покажет актуальное состояние */ } }} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground">Отменить</button>}
-                </div>
-              )}
-              {importState.error && <p className="text-xs text-red-300">{importState.error}</p>}
-            </div>
-          )}
-        </motion.div>
-      )}
 
       {/* Навигационные плитки — отдельные страницы */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

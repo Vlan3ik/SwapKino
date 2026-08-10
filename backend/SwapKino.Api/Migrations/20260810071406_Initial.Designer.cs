@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SwapKino.Api;
@@ -11,9 +12,11 @@ using SwapKino.Api;
 namespace SwapKino.Api.Migrations
 {
     [DbContext(typeof(SwapKinoDbContext))]
-    partial class SwapKinoDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260810071406_Initial")]
+    partial class Initial
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -150,34 +153,6 @@ namespace SwapKino.Api.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("AspNetUserTokens", (string)null);
-                });
-
-            modelBuilder.Entity("SwapKino.Api.CatalogSyncState", b =>
-                {
-                    b.Property<string>("Source")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<long>("ImportedCount")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("LastFetchedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("NextPage")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("TotalPages")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Source", "IsSeries");
-
-                    b.ToTable("CatalogSyncStates");
                 });
 
             modelBuilder.Entity("SwapKino.Api.Genre", b =>
@@ -639,9 +614,6 @@ namespace SwapKino.Api.Migrations
 
                     b.Property<int>("AccessFailedCount")
                         .HasColumnType("integer");
-
-                    b.Property<string>("AvatarUrl")
-                        .HasColumnType("text");
 
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()

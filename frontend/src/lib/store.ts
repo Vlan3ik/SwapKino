@@ -11,11 +11,14 @@ export type View =
   | { name: "license" }
   | { name: "privacy" }
   | { name: "terms" }
+  | { name: "copyright" }
+  | { name: "about" }
   | { name: "movie"; movieId: number; isSeries?: boolean };
 
 export interface User {
   id: string;
   username: string;
+  avatarUrl?: string | null;
   email: string;
   createdAt: number;
 }
@@ -30,6 +33,8 @@ export function viewPath(view: View): string {
     case "license": return "/license";
     case "privacy": return "/privacy";
     case "terms": return "/terms";
+    case "copyright": return "/copyright";
+    case "about": return "/about";
     case "movie": return `/movie/${view.movieId}${view.isSeries ? "?series=1" : ""}`;
   }
 }
@@ -41,7 +46,7 @@ export function viewFromLocation(): View {
   if (movieMatch) return { name: "movie", movieId: Number(movieMatch[1]), isSeries: new URLSearchParams(window.location.search).get("series") === "1" };
   const names: Record<string, View["name"]> = {
     "/catalog": "catalog", "/favorites": "favorites", "/ratings": "ratings",
-    "/profile": "profile", "/license": "license", "/privacy": "privacy", "/terms": "terms",
+    "/profile": "profile", "/license": "license", "/privacy": "privacy", "/terms": "terms", "/copyright": "copyright", "/about": "about",
   };
   return names[path] ? { name: names[path] as Exclude<View["name"], "movie"> } : { name: "feed" };
 }
@@ -81,13 +86,15 @@ interface AppState {
   removeRating: (movieId: number, isSeries?: boolean) => void;
   getRating: (movieId: number, isSeries?: boolean) => number | null;
   setActiveReel: (reelId: string | null) => void;
-  register: (data: { username: string; email: string; password: string }) => Promise<{ ok: true } | { ok: false; error: string }>;
+  register: (data: { username: string; email: string; password: string; privacyConsent: boolean }) => Promise<{ ok: true } | { ok: false; error: string }>;
+  deleteAccount: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  updateUserProfile: (user: { id: string; email: string; displayName?: string | null; avatarUrl?: string | null; createdAt?: string | null }) => void;
   login: (identifier: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   logout: () => void;
 }
 
 function userFromApi(user: { id: string; email: string; displayName?: string | null; createdAt?: string | null }): User {
-  return { id: user.id, email: user.email, username: user.displayName || user.email, createdAt: user.createdAt ? Date.parse(user.createdAt) : Date.now() };
+  return { id: user.id, email: user.email, username: user.displayName || user.email, avatarUrl: (user as { avatarUrl?: string | null }).avatarUrl, createdAt: user.createdAt ? Date.parse(user.createdAt) : Date.now() };
 }
 
 export function contentKey(movieId: number, isSeries = false) {
@@ -295,9 +302,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   getRating: (movieId, isSeries = false) => get().ratings[contentKey(movieId, isSeries)] ?? null,
   setActiveReel: (reelId) => set({ activeReelId: reelId }),
 
-  register: async ({ username, email, password }) => {
+  register: async ({ username, email, password, privacyConsent }) => {
     try {
-      const response = await api.register({ email: email.trim().toLowerCase(), password, displayName: username.trim() });
+      const response = await api.register({ email: email.trim().toLowerCase(), password, displayName: username.trim(), privacyConsent });
       setToken(response.accessToken);
       set({ token: response.accessToken, user: userFromApi(response.user) });
       await get().loadMovies();
@@ -315,4 +322,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Не удалось войти" }; }
   },
   logout: () => { void api.logout().catch(() => undefined); setToken(null); set({ user: null, token: null, favorites: [], ratings: {} }); void get().loadMovies(); },
+  deleteAccount: async () => {
+    try {
+      await api.deleteAccount();
+      setToken(null);
+      set({ user: null, token: null, favorites: [], ratings: {} });
+      return { ok: true };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Не удалось удалить аккаунт" }; }
+  },
+  updateUserProfile: (user) => set({ user: userFromApi(user) }),
 }));

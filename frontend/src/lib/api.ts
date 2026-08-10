@@ -7,6 +7,7 @@ export interface ApiUser {
   id: string;
   email: string;
   displayName?: string | null;
+  avatarUrl?: string | null;
   createdAt?: string | null;
 }
 
@@ -196,7 +197,7 @@ export function setToken(token: string | null) {
 async function request<T>(path: string, init: RequestInit = {}, allowRefresh = true): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (init.body && !headers.has("Content-Type")) {
+  if (init.body && !headers.has("Content-Type") && !(typeof FormData !== "undefined" && init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
   const token = getToken();
@@ -255,12 +256,21 @@ async function request<T>(path: string, init: RequestInit = {}, allowRefresh = t
 }
 
 export const api = {
-  register: (payload: { email: string; password: string; displayName: string }) =>
+  register: (payload: { email: string; password: string; displayName: string; privacyConsent: boolean }) =>
     request<AuthResponse>("/auth/register", { method: "POST", body: JSON.stringify(payload) }),
   login: (payload: { email: string; password: string }) =>
     request<AuthResponse>("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<ApiUser>("/auth/me"),
   profile: () => request<ApiProfile>("/profile"),
+  updateProfile: (payload: { displayName?: string; avatarUrl?: string }) =>
+    request<ApiUser>("/profile", { method: "PATCH", body: JSON.stringify(payload) }),
+  uploadAvatar: async (file: File) => {
+    const body = new FormData(); body.append("file", file);
+    return request<ApiUser>("/profile/avatar", { method: "POST", body });
+  },
+  deleteAvatar: () => request<void>("/profile/avatar", { method: "DELETE" }),
+  changePassword: (payload: { currentPassword: string; newPassword: string }) =>
+    request<void>("/auth/password", { method: "POST", body: JSON.stringify(payload) }),
   movies: (query: CatalogQuery | number = {}) => {
     const normalized: CatalogQuery = typeof query === "number" ? { cursor: query > 1 ? String(query) : undefined } : query;
     const params = new URLSearchParams();
@@ -306,6 +316,7 @@ export const api = {
   importResume: (id: string) => request<ImportStatus>(`/imports/${id}/resume`, { method: "POST" }),
   importCancel: (id: string) => request<ImportStatus>(`/imports/${id}/cancel`, { method: "POST" }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
+  deleteAccount: () => request<void>("/account", { method: "DELETE" }),
 };
 
 function libraryParams(query: LibraryQuery): URLSearchParams {

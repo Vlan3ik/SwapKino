@@ -27,10 +27,12 @@ export function FilmReelCarousel() {
       if (id !== requestId.current) return;
       const rows = Array.isArray(response) ? response : response.items ?? response.results ?? [];
       const mapped = rows.map(mapApiReel);
-      await preloadImages(mapped.map((reel) => reel.coverUrl));
       if (id !== requestId.current) return;
       setReels(mapped);
       setIndex(0);
+      // Не блокируем первый экран загрузкой всех обложек. Ближайшие карточки
+      // прогреваем после публикации данных, остальные загрузятся лениво.
+      void preloadImages(mapped.slice(0, 3).map((reel) => reel.coverUrl));
     } catch (cause) {
       if (id !== requestId.current) return;
       setReels([]);

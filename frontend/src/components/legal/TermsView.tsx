@@ -168,8 +168,8 @@ export function TermsView() {
           <section>
             <h2 className="font-bold text-base mb-2">11. Контакты</h2>
             <p>
-              Вопросы по Условиям использования можно задать через Issues на
-              GitHub:
+              Вопросы по Условиям использования можно задать по email:
+              <a href="mailto:steammail_38@mail.ru" className="text-rating hover:underline ml-1">steammail_38@mail.ru</a>. Технические вопросы можно задать через Issues на GitHub:
               <a
                 href="https://github.com/Vlan3ik/SwapKino/issues"
                 target="_blank"

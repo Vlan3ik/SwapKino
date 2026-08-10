@@ -52,6 +52,8 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
 
         await using var connection = new NpgsqlConnection(postgres.GetConnectionString());
         await connection.OpenAsync();
+        await using var migrations = new NpgsqlCommand("SELECT count(*) FROM \"__EFMigrationsHistory\"", connection);
+        Assert.Equal(1L, (long)(await migrations.ExecuteScalarAsync())!);
         await using var command = new NpgsqlCommand("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('AspNetUserRoles','AspNetUserClaims','AspNetUserLogins','AspNetUserTokens','AspNetRoleClaims')", connection);
         Assert.Equal(5L, (long)(await command.ExecuteScalarAsync())!);
     }
@@ -253,6 +255,21 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         var movie=await db.Movies.SingleAsync(x=>x.TmdbId==8201&&!x.IsSeries);
         Assert.Equal("/poster.jpg",movie.PosterPath);
         Assert.Equal("/backdrop.jpg",movie.BackdropPath);
+    }
+
+    [Fact]
+    public async Task Tmdb_details_persist_keywords_people_and_external_ids()
+    {
+        await using var scope= factory.Services.CreateAsyncScope();
+        var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
+        var body="""{"id":8301,"title":"Tagged movie","overview":"Overview","release_date":"2024-01-01","runtime":110,"vote_average":8,"vote_count":500,"popularity":20,"adult":false,"genres":[{"id":27,"name":"Horror"}],"keywords":{"keywords":[{"id":123,"name":"haunted house"},{"id":456,"name":"survival"}]},"external_ids":{"imdb_id":"tt8301","kinopoisk_id":8301},"credits":{"crew":[{"id":77,"name":"Director One","job":"Director"}],"cast":[{"id":88,"name":"Actor One","character":"Hero","order":0}]}}""";
+        var tmdb=new TmdbClient(new StubHttpClientFactory(body),new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>{{"TMDB_API_KEY","test"}}).Build(),db);
+        await tmdb.Details(8301,CancellationToken.None);
+        db.ChangeTracker.Clear();
+        var movie=await db.Movies.Include(x=>x.MovieKeywords).Include(x=>x.MoviePeople).SingleAsync(x=>x.TmdbId==8301&&!x.IsSeries);
+        Assert.Equal(8301,movie.KinopoiskId); Assert.Equal("tt8301",movie.ImdbId);
+        Assert.Equal(2,movie.MovieKeywords.Count); Assert.Contains(movie.MovieKeywords,x=>x.KeywordId==123);
+        Assert.Contains(movie.MoviePeople,x=>x.Department=="Director"); Assert.Contains(movie.MoviePeople,x=>x.Department=="Actor");
     }
 
     [Fact]

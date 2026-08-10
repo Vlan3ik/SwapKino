@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Mail, Lock, User, Flame, Eye, EyeOff } from "lucide-react";
+import Link from "next/link";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,7 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [privacyConsent, setPrivacyConsent] = useState(false);
 
   const passwordRules = [
     { label: "не менее 8 символов", valid: password.length >= 8 },
@@ -40,6 +42,7 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
     setPassword("");
     setError(null);
     setShowPassword(false);
+    setPrivacyConsent(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -50,11 +53,15 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
       setError(`Пароль не надёжен. Добавь: ${missing.join(", ")}.`);
       return;
     }
+    if (mode === "register" && !privacyConsent) {
+      setError("Подтверди согласие на обработку персональных данных.");
+      return;
+    }
     setLoading(true);
     const result =
       mode === "login"
         ? await login(identifier, password)
-        : await register({ username, email, password });
+        : await register({ username, email, password, privacyConsent });
     setLoading(false);
     if (result.ok) {
       reset();
@@ -147,6 +154,13 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
                     onChange={setEmail}
                   />
                 </>
+              )}
+
+              {mode === "register" && (
+                <label className="flex items-start gap-2 text-xs text-muted-foreground leading-relaxed cursor-pointer">
+                  <input type="checkbox" checked={privacyConsent} onChange={(e) => setPrivacyConsent(e.target.checked)} className="mt-0.5 accent-rating" />
+                  <span>Соглашаюсь на обработку персональных данных по <Link href="/privacy" target="_blank" className="text-rating hover:underline">Политике конфиденциальности</Link> и принимаю <Link href="/terms" target="_blank" className="text-rating hover:underline">Условия использования</Link>.</span>
+                </label>
               )}
               {mode === "login" && (
                 <Field

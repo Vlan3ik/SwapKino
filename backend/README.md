@@ -23,6 +23,8 @@ API: `http://localhost:8000`, Swagger: `http://localhost:8000/swagger`.
 - `selenium-service` — изолированный Kinopoisk scraper.
 
 Для продакшена обязательно заменить `JWT_SECRET`, пароли PostgreSQL/MinIO и TMDB credentials через секрет-хранилище.
+
+Vibix настраивается через `VIBIX_API_KEY`. Backend ищет фильм или сериал через publisher catalog API (`POST /api/v1/publisher/catalog/data`) по сохранённым Kinopoisk/IMDb ID или названию, затем использует возвращённые `iframe_video_url`, `embed_code_new` и внутренний `iframe_video_id`. Токен хранится только в `.env`/секрет-хранилище и не включается в исходники.
 # Контракт пользовательской библиотеки
 
 Авторизованный frontend может работать как тонкая панель управления API:
