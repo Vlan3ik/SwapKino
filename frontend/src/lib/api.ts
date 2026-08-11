@@ -93,6 +93,7 @@ export interface ApiMoviePlayer {
   name: string;
   embedUrl: string | null;
   embed?: { publisherId: string; type: string; id: string } | null;
+  status?: string;
   available: boolean;
 }
 

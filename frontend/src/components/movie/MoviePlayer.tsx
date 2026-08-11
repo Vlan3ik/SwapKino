@@ -27,12 +27,6 @@ function safeEmbedUrl(value: string | null): string | null {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    // Vibix's current videoframe2 certificate is expired. Keep the request
-    // pointed at Vibix, but let the local nginx proxy terminate TLS for the
-    // browser and validate the upstream response server-side.
-    if (url.hostname.endsWith(".videoframe2.com")) {
-      return `http://vibix.localhost${url.pathname}${url.search}`;
-    }
     return url.toString();
   } catch {
     return null;
@@ -79,8 +73,10 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
 
   useEffect(() => {
     if (!active) return;
-    setFrameState(active.embed ? "ready" : "loading");
-    if (active.embed) return;
+    // An SDK <ins> does not have an iframe load event. Only an actual iframe
+    // starts in loading state; the SDK owns its own loading/error UI.
+    setFrameState(active.embedUrl ? "loading" : "ready");
+    if (!active.embedUrl) return;
     setSlow(false);
     const timeout = window.setTimeout(() => setSlow(true), 10_000);
     return () => window.clearTimeout(timeout);
