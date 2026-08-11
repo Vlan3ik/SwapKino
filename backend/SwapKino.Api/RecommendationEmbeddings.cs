@@ -81,7 +81,9 @@ public static class RecommendationEmbeddings
     public static async Task<List<(int TmdbId, bool IsSeries)>> NearestAsync(SwapKinoDbContext db, IReadOnlyList<float> profile, int limit, CancellationToken ct)
     {
         if (profile.Count != Dimensions || profile.All(x => x == 0)) return [];
-        await using var connection = (NpgsqlConnection)db.Database.GetDbConnection();
+        // This connection belongs to EF Core's DbContext. Do not dispose it here:
+        // the ranking query continues using the same context immediately after ANN retrieval.
+        var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open) await connection.OpenAsync(ct);
         await using var command = new NpgsqlCommand($@"
             SELECT ""TmdbId"", ""IsSeries""
