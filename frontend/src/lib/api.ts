@@ -180,9 +180,14 @@ export interface ReelFeed {
   reel: ApiReel;
   feedSessionId?: string;
   items: ApiMovie[];
+  feedItems?: ApiFeedItem[];
   results?: ApiMovie[];
   nextCursor?: string | null;
 }
+
+export type ApiFeedItem =
+  | { kind: "movie"; movie: ApiMovie }
+  | { kind: "taste_probe"; probeId: string; movieId: number; prompt: string; options: string[] };
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -304,9 +309,10 @@ export const api = {
   action: (payload: {
     tmdbId: number;
     isSeries?: boolean;
-    actionType: string;
+    actionType: "impression" | "favorite" | "unfavorite" | "rate" | "rating" | "unrate" | "skip" | "swipe_left" | "swipe_right" | "not_interested" | "watched" | "unwatched" | "more_like_this" | "less_like_this" | "not_for_me" | "already_watched" | "rate_inline";
     value?: number;
     idempotencyKey: string;
+    sessionId?: string;
   }) => request<{ id: string; duplicate: boolean }>("/actions", { method: "POST", body: JSON.stringify(payload) }),
   importProfile: (profileUrl: string) =>
     request<{ id: string; status: string; progress: number }>("/imports", {

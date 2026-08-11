@@ -36,6 +36,21 @@ export interface Movie {
   detailsState?: string | null;
 }
 
+export interface MovieFeedItem {
+  kind: "movie";
+  movie: Movie;
+}
+
+export interface TasteProbeFeedItem {
+  kind: "taste_probe";
+  probeId: string;
+  movieId: number;
+  prompt: string;
+  options: Array<"more_like_this" | "less_like_this" | "not_for_me" | "already_watched" | "rate_inline">;
+}
+
+export type FeedItem = MovieFeedItem | TasteProbeFeedItem;
+
 export interface FilmReel {
   id: string;
   slug: string;

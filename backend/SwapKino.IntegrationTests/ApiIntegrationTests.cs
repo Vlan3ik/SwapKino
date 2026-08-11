@@ -1,5 +1,3 @@
-extern alias worker;
-
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -17,7 +15,7 @@ namespace SwapKino.IntegrationTests;
 [Collection("api-integration")]
 public sealed class ApiIntegrationTests : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer postgres = new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
+    private readonly PostgreSqlContainer postgres = new PostgreSqlBuilder().WithImage("pgvector/pgvector:pg16").Build();
     private readonly RedisContainer redis = new RedisBuilder().WithImage("redis:7-alpine").Build();
     private SwapKinoApiFactory factory = null!;
     private HttpClient client = null!;
@@ -53,7 +51,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         await using var connection = new NpgsqlConnection(postgres.GetConnectionString());
         await connection.OpenAsync();
         await using var migrations = new NpgsqlCommand("SELECT count(*) FROM \"__EFMigrationsHistory\"", connection);
-        Assert.Equal(1L, (long)(await migrations.ExecuteScalarAsync())!);
+        Assert.True((long)(await migrations.ExecuteScalarAsync())! >= 6);
         await using var command = new NpgsqlCommand("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('AspNetUserRoles','AspNetUserClaims','AspNetUserLogins','AspNetUserTokens','AspNetRoleClaims')", connection);
         Assert.Equal(5L, (long)(await command.ExecuteScalarAsync())!);
     }
@@ -169,7 +167,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
 
-        var query=worker::ImportQueries.LightweightMovies(db.Movies.AsNoTracking().Where(x=>x.TmdbId==6201));
+        var query=ImportQueries.LightweightMovies(db.Movies.AsNoTracking().Where(x=>x.TmdbId==6201));
         Assert.DoesNotContain("\"Payload\"",query.ToQueryString(),StringComparison.Ordinal);
         var candidate=await query.SingleAsync();
         Assert.Equal("Lightweight match",candidate.Title);
@@ -186,6 +184,27 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=777,actionType="rating",value=8,idempotencyKey="rate-777"})).StatusCode);
         Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=777,actionType="favorite",value=(double?)null,idempotencyKey="favorite-777"})).StatusCode);
         var library=await client.GetFromJsonAsync<JsonElement>("/api/v1/library");var item=library.GetProperty("items")[0];Assert.Equal(8,item.GetProperty("rating").GetDouble());Assert.True(item.GetProperty("favorite").GetBoolean());Assert.True(item.GetProperty("watched").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Swipe_right_skip_and_dislike_have_distinct_state_effects()
+    {
+        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="signals@example.test",password="IntegrationPass123!",displayName="Signals"})).Content.ReadFromJsonAsync<JsonElement>();
+        client.DefaultRequestHeaders.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",auth.GetProperty("accessToken").GetString());
+        await using(var scope=factory.Services.CreateAsyncScope())
+        {
+            var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
+            db.Movies.AddRange(new Movie{TmdbId=880,Title="Right"},new Movie{TmdbId=881,Title="Skip"},new Movie{TmdbId=882,Title="Dislike"});
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=880,actionType="swipe_right",idempotencyKey="signal-right"})).StatusCode);
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=881,actionType="skip",sessionId="signal-session",idempotencyKey="signal-skip"})).StatusCode);
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=882,actionType="not_for_me",idempotencyKey="signal-dislike"})).StatusCode);
+        await using var verify=factory.Services.CreateAsyncScope();
+        var states=verify.ServiceProvider.GetRequiredService<SwapKinoDbContext>().UserMovieStates.AsNoTracking().Where(x=>x.UserId==Guid.Parse(auth.GetProperty("user").GetProperty("id").GetString()!)&&x.TmdbId>=880).ToList();
+        Assert.False(states.Single(x=>x.TmdbId==880).Favorite);
+        Assert.Null(states.Single(x=>x.TmdbId==881).SuppressedUntil);
+        Assert.NotNull(states.Single(x=>x.TmdbId==882).SuppressedUntil);
     }
 
     [Fact]
