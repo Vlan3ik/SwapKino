@@ -31,7 +31,7 @@ services:
     command: server /data --console-address ":9001"
     environment: {MINIO_ROOT_USER: minio, MINIO_ROOT_PASSWORD: minio-secret-change-me}
     volumes: ["minio-data:/data"]
-    ports: ["9000:9000", "9001:9001"]
+    ports: ["127.0.0.1:19000:9000", "127.0.0.1:19001:9001"]
     mem_limit: 512m
     cpus: 0.5
 
@@ -51,8 +51,8 @@ services:
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: minio-secret-change-me
       MINIO_BUCKET: swapkino-uploads
-      MINIO_PUBLIC_URL: http://localhost:9000
-      CORS_ORIGINS: http://localhost,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:3000
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:3000}
       CATALOG_SYNC_INTERVAL_SECONDS: 12
       CATALOG_PAGES_PER_CYCLE: 1
       TMDB_ALLOW_FALLBACK: "false"
@@ -107,7 +107,7 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
-    ports: ["80:80"]
+    ports: ["127.0.0.1:18080:80"]
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z
     depends_on: {frontend: {condition: service_started}, api: {condition: service_started}}
