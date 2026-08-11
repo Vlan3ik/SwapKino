@@ -29,7 +29,7 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
 
   useEffect(() => {
     let active = true; setLoading(true);
-    api.reelFeed(reelId).then(async (response) => { if (!active) return; const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? []; const mapped = raw.map(mapApiMovie); await preloadMovies(mapped); if (!active) return; setReel(mapApiReel(response.reel)); setFeedItems(movieFeedItems(mapped)); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active && fallbackReel) setFeedItems(movieFeedItems(getReelMovies(fallbackReel, catalog))); }).finally(() => { if (active) setLoading(false); });
+    api.reelFeed(reelId).then(async (response) => { if (!active) return; const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? []; const mapped = raw.map(mapApiMovie); await preloadMovies(mapped); if (!active) return; setReel(mapApiReel(response.reel)); setFeedItems(movieFeedItems(mapped)); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active) setFeedItems([]); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [reelId]);
 

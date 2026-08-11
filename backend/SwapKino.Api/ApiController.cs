@@ -37,7 +37,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
     [HttpPost("auth/register")][EnableRateLimiting("auth")]
     [ProducesResponseType(StatusCodes.Status201Created)]
-    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct) { if (!request.PrivacyConsent) return BadRequest(new { message = "Необходимо согласие на обработку персональных данных" }); if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName,PrivacyConsentAt=DateTime.UtcNow,PrivacyConsentVersion="2026-08-10"}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(new { message = string.Join(" ", result.Errors.Select(error => error.Description)), errors = result.Errors }); return await AuthResponse(u, ct, StatusCodes.Status201Created); }
+    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct) { if (!request.PrivacyConsent) return BadRequest(new { message = "Необходимо согласие на обработку персональных данных" }); if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName,PrivacyConsentAt=DateTime.UtcNow,PrivacyConsentVersion="2026-08-10"}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(new { message = string.Join(" ", result.Errors.Select(error => error.Description)), errors = result.Errors }); db.UserTasteProfiles.Add(new UserTasteProfile { UserId = u.Id }); await db.SaveChangesAsync(ct); return await AuthResponse(u, ct, StatusCodes.Status201Created); }
     [HttpPost("auth/login")][EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct)
     {
@@ -437,7 +437,10 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         if(cached is null)
         {
             var uid=Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier),out var value)?value:(Guid?)null;
-            var ranked=await RankMovies(uid,reel,0,240,ct);keys=ranked.Select(x=>new MovieKey(x.TmdbId,x.IsSeries)).ToList();
+            // Keep the first request bounded. The deck loads 20 cards and asks
+            // for the next page with the cursor; ranking hundreds of graph-heavy
+            // candidates before returning the first card caused 40-90s timeouts.
+            var ranked=await RankMovies(uid,reel,0,60,ct);keys=ranked.Select(x=>new MovieKey(x.TmdbId,x.IsSeries)).ToList();
             await cache.SetStringAsync(cacheKey,JsonSerializer.Serialize(keys),new DistributedCacheEntryOptions{AbsoluteExpirationRelativeToNow=TimeSpan.FromMinutes(30)},ct);
         }
         else keys=JsonSerializer.Deserialize<List<MovieKey>>(cached)??[];

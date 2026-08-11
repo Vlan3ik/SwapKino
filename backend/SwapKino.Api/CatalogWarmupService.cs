@@ -26,6 +26,11 @@ public sealed class CatalogWarmupService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!config.GetValue("CATALOG_SYNC_ENABLED", true))
+        {
+            log.LogInformation("Catalog sync is disabled by CATALOG_SYNC_ENABLED=false");
+            return;
+        }
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);

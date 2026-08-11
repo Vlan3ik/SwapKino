@@ -49,7 +49,7 @@ export function getReelMovies(reelConfig: FilmReel, catalog: Movie[]): Movie[] {
   if (reelConfig.genres.length === 0) return catalog;
   const wanted = new Set(reelConfig.genres.map((genre) => genre.toLocaleLowerCase("ru")));
   const matching = catalog.filter((movie) => movie.genres.some((genre) => wanted.has(genre.toLocaleLowerCase("ru"))));
-  return matching.length > 0 ? matching : catalog;
+  return matching;
 }
 
 export const allGenres = ["Боевик", "Анимация", "Биография", "Вестерн", "Военный", "Детектив", "Документальный", "Драма", "История", "Комедия", "Криминал", "Мелодрама", "Музыка", "Приключения", "Семейный", "Спорт", "Триллер", "Ужасы", "Фантастика", "Фэнтези"];
