@@ -16,6 +16,7 @@ namespace SwapKino.Api;
 [Route("api/v1")]
 public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IHttpClientFactory http, TmdbClient tmdb, VibixClient vibix, AvatarStorage avatars) : ControllerBase
 {
+    private static readonly JsonSerializerOptions CacheJsonOptions = new(JsonSerializerDefaults.Web);
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddHours(2),signingCredentials:creds)); }
     private async Task<string> CreateRefreshSession(User user, CancellationToken ct)
@@ -368,7 +369,8 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     public async Task<IActionResult> Reels(CancellationToken ct)
     {
         var viewerKey = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "guest";
-        var reelsCacheKey = $"reels:v3:{viewerKey}";
+        // v4 invalidates the former cache entries serialized with PascalCase fields.
+        var reelsCacheKey = $"reels:v4:{viewerKey}";
         var cachedReels = await cache.GetStringAsync(reelsCacheKey, ct);
         if (!string.IsNullOrWhiteSpace(cachedReels)) return Content(cachedReels, "application/json");
         var genreIds=ReelDefinitions.All.SelectMany(x=>x.Genres).Distinct().ToArray();
@@ -381,16 +383,22 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             .Take(ReelCandidateLimit)).ToListAsync(ct);
         var assigned=new HashSet<MovieKey>();
         var userId=Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier),out var authenticatedUser)?authenticatedUser:(Guid?)null;
+        // A guest has no taste profile yet. Rotate the representative covers in a
+        // short, stable window so a refresh does not make the page jump, while the
+        // front page does not always begin with exactly the same films either.
+        var guestRotation=userId is null?DateTime.UtcNow.ToString("yyyyMMddHH"):null;
         var preferredGenres=userId is null?new Dictionary<int,double>():await db.UserMovieStates.AsNoTracking().Where(x=>x.UserId==userId&&(!x.Watched||x.Rating>=7||x.Favorite)).Join(db.MovieGenres,m=>new{m.TmdbId,m.IsSeries},link=>new{link.TmdbId,link.IsSeries},(_,link)=>link.GenreId).GroupBy(x=>x).ToDictionaryAsync(x=>x.Key,x=>(double)x.Count(),ct);
         var orderedReels=ReelDefinitions.All.Select((reel,index)=>new{reel,index,score=reel.Genres.Sum(id=>preferredGenres.GetValueOrDefault(id))}).OrderByDescending(x=>x.score).ThenBy(x=>x.index).Select(x=>x.reel);
         var items=orderedReels.Select(reel=>
         {
             var eligible=RankReelCandidates(candidates,reel);
-            var representative=eligible.FirstOrDefault(x=>!assigned.Contains(new MovieKey(x.TmdbId,x.IsSeries)))??eligible.FirstOrDefault();
+            var representative=userId is null
+                ? RotatingReelCandidate(eligible,assigned,$"{guestRotation}:{reel.Slug}")
+                : eligible.FirstOrDefault(x=>!assigned.Contains(new MovieKey(x.TmdbId,x.IsSeries)))??eligible.FirstOrDefault();
             if(representative is not null)assigned.Add(new MovieKey(representative.TmdbId,representative.IsSeries));
             return ReelMetadata(reel,genres,representative);
         }).ToArray();
-        var payload = JsonSerializer.Serialize(new { items });
+        var payload = JsonSerializer.Serialize(new { items }, CacheJsonOptions);
         await cache.SetStringAsync(reelsCacheKey, payload, new DistributedCacheEntryOptions
         {
             AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2)
@@ -613,6 +621,19 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
                 &&(reel.MaxRuntime is null||m.RuntimeMinutes is not null&&m.RuntimeMinutes<=reel.MaxRuntime)
                 &&(reel.YearBefore is null||m.ReleaseDate is not null&&string.Compare(m.ReleaseDate,reel.YearBefore+"-12-31")<=0))
             .OrderByDescending(m=>m.Popularity*.25+m.VoteAverage*2+Theme(m)).ThenByDescending(m=>m.VoteCount).ThenBy(m=>m.TmdbId).ToList();
+    }
+    private static Movie? RotatingReelCandidate(IReadOnlyList<Movie> candidates,IReadOnlySet<MovieKey> assigned,string rotationKey)
+    {
+        if(candidates.Count==0)return null;
+        var window=Math.Min(candidates.Count,24);
+        var hash=SHA256.HashData(Encoding.UTF8.GetBytes(rotationKey));
+        var start=(int)(BitConverter.ToUInt32(hash,0)%(uint)window);
+        for(var offset=0;offset<window;offset++)
+        {
+            var candidate=candidates[(start+offset)%window];
+            if(!assigned.Contains(new MovieKey(candidate.TmdbId,candidate.IsSeries)))return candidate;
+        }
+        return candidates[start];
     }
     private const int ReelCandidateLimit=600;
     private const int RankingCandidateLimit=2000;
