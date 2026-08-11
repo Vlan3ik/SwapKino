@@ -15,9 +15,7 @@ interface MoviePlayerProps {
 }
 
 const PROVIDERS = [
-  { key: "alloha", label: "AllohaTV" },
   { key: "vibix", label: "Vibix" },
-  { key: "turbo", label: "Turbo" },
 ] as const;
 
 function providerKey(value: string) {
@@ -28,7 +26,8 @@ function safeEmbedUrl(value: string | null): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return url.toString();
   } catch {
     return null;
   }
@@ -53,7 +52,7 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
       setPlayers(items);
       const first = PROVIDERS.find((provider) => {
         const item = items.find((row) => providerKey(row.provider) === provider.key);
-        return item?.available && safeEmbedUrl(item.embedUrl);
+        return item?.available && (Boolean(item.embed) || Boolean(safeEmbedUrl(item.embedUrl)));
       });
       setActiveProvider(first?.key ?? null);
       setAvailability(first ? "available" : "unavailable");
@@ -68,17 +67,20 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
   const sources = useMemo(() => PROVIDERS.map((provider) => {
     const item = players.find((row) => providerKey(row.provider) === provider.key);
     const embedUrl = safeEmbedUrl(item?.embedUrl ?? null);
-    return { ...provider, embedUrl, available: Boolean(item?.available && embedUrl) };
+    return { ...provider, embedUrl, embed: item?.embed ?? null, available: Boolean(item?.available && (item.embed || embedUrl)) };
   }), [players]);
   const active = sources.find((source) => source.key === activeProvider && source.available) ?? null;
 
   useEffect(() => {
     if (!active) return;
-    setFrameState("loading");
+    // An SDK <ins> does not have an iframe load event. Only an actual iframe
+    // starts in loading state; the SDK owns its own loading/error UI.
+    setFrameState(active.embedUrl ? "loading" : "ready");
+    if (!active.embedUrl) return;
     setSlow(false);
     const timeout = window.setTimeout(() => setSlow(true), 10_000);
     return () => window.clearTimeout(timeout);
-  }, [active?.key, frameAttempt]);
+  }, [active?.key, active?.embed?.id, frameAttempt]);
 
   const select = (key: string) => {
     const source = sources.find((row) => row.key === key);
@@ -104,7 +106,7 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
         <Play className="h-5 w-5 fill-current" /> Смотреть
       </h2>
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-black shadow-cinematic">
-        <div role="tablist" aria-label="Источник видео" className="grid grid-cols-3 gap-px border-b border-white/10 bg-white/10 p-px">
+        <div role="tablist" aria-label="Источник видео" className="grid grid-cols-1 gap-px border-b border-white/10 bg-white/10 p-px">
           {sources.map((source) => (
             <button
               key={source.key}
@@ -151,29 +153,32 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
           {availability === "loading" && <PlayerMessage icon={<LoaderCircle className="h-7 w-7 animate-spin" />} title="Ищем доступные источники…" />}
           {availability === "error" && <PlayerMessage icon={<TriangleAlert className="h-7 w-7 text-skip" />} title="Не удалось загрузить источники" text="Проверьте соединение и попробуйте ещё раз." action={<Retry onClick={() => void load()} />} />}
           {availability === "unavailable" && <PlayerMessage icon={<Play className="h-7 w-7" />} title="Просмотр пока недоступен" text="Для этого фильма нет доступных источников." />}
-          {active?.embedUrl && (
+          {(active?.embedUrl || active?.embed) && (
             <>
               {frameState !== "ready" && frameState !== "error" && <PlayerMessage icon={<LoaderCircle className="h-7 w-7 animate-spin" />} title={slow ? "Плеер загружается дольше обычного" : "Загружаем плеер…"} text={slow ? "Можно подождать или загрузить его ещё раз." : undefined} action={slow ? <Retry onClick={() => setFrameAttempt((value) => value + 1)} /> : undefined} />}
               {frameState === "error" && <PlayerMessage icon={<TriangleAlert className="h-7 w-7 text-skip" />} title="Плеер не загрузился" text="Попробуйте ещё раз или выберите другой источник." action={<Retry onClick={() => setFrameAttempt((value) => value + 1)} />} />}
-              <iframe
+              {active.embedUrl ? <iframe
                 key={`${active.key}:${frameAttempt}`}
-                src={active.embedUrl}
+                src={active.embedUrl ?? ""}
                 title={`${active.label}: ${title}`}
                 loading="lazy"
                 allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                 allowFullScreen
-                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
                 referrerPolicy="no-referrer"
                 onLoad={() => { setFrameState("ready"); setSlow(false); }}
                 onError={() => setFrameState("error")}
                 className={cn("absolute inset-0 h-full w-full border-0", frameState !== "ready" && "invisible")}
-              />
+              /> : active.embed ? <VibixEmbed embed={active.embed} /> : null}
             </>
           )}
         </div>
       </div>
     </section>
   );
+}
+
+function VibixEmbed({ embed }: { embed: { publisherId: string; type: string; id: string } }) {
+  return <ins data-publisher-id={embed.publisherId} data-type={embed.type} data-id={embed.id} data-design="1" data-width="100%" data-height="500px" className="block min-h-[280px] w-full" />;
 }
 
 function PlayerMessage({ icon, title, text, action }: { icon: React.ReactNode; title: string; text?: string; action?: React.ReactNode }) {

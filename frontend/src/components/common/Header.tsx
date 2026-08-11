@@ -14,6 +14,7 @@ import {
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { AuthModal } from "./AuthModal";
+import { BrandMark } from "./BrandMark";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -50,10 +51,7 @@ export function Header() {
                 className="relative"
               >
                 <div className="absolute inset-0 bg-rating/30 blur-lg rounded-full" />
-                <Flame
-                  className="relative h-7 w-7 text-rating"
-                  fill="currentColor"
-                />
+                <BrandMark className="relative h-9 w-9" />
               </motion.div>
               <div className="flex flex-col items-start leading-none">
                 <span className="text-lg font-bold tracking-tight text-foreground">
@@ -97,10 +95,8 @@ export function Header() {
                       : "bg-transparent"
                   )}
                 >
-                  <div className="h-7 w-7 rounded-full bg-gradient-to-br from-rating/80 to-skip/60 flex items-center justify-center border border-white/10">
-                    <span className="text-xs font-bold text-black">
-                      {user.username[0]?.toUpperCase()}
-                    </span>
+                  <div className="h-7 w-7 overflow-hidden rounded-full bg-gradient-to-br from-rating/80 to-skip/60 flex items-center justify-center border border-white/10">
+                    {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" /> : <span className="text-xs font-bold text-black">{user.username[0]?.toUpperCase()}</span>}
                   </div>
                   <span className="text-sm font-medium hidden sm:inline max-w-[120px] truncate">
                     {user.username}

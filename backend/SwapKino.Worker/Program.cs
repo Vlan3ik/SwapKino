@@ -14,6 +14,8 @@ builder.Services.AddHttpClient("tmdb", c => c.BaseAddress = new Uri((builder.Con
 builder.Services.AddScoped<TmdbClient>();
 builder.Services.AddHostedService<OutboxDispatcher>();
 builder.Services.AddHostedService<ImportStreamWorker>();
+builder.Services.AddHostedService<RecommendationWorker>();
+builder.Services.AddHostedService<RecommendationFeatureWorker>();
 var host = builder.Build();
 await host.RunAsync();
 

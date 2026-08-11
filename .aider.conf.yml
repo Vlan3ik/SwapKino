@@ -1,0 +1,6 @@
+model: ollama_chat/qwen2.5-coder:7b
+auto-commits: false
+dirty-commits: false
+show-diffs: true
+stream: true
+map-tokens: 2048

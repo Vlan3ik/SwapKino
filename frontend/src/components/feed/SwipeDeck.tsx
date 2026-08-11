@@ -1,31 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronLeft, Clock, Heart, Info, Star, X } from "lucide-react";
-import { motion, PanInfo, useMotionValue, useTransform } from "framer-motion";
+import { AnimatePresence, motion, PanInfo, useMotionValue, useTransform } from "framer-motion";
 import { api, getToken, mapApiMovie, mapApiReel } from "@/lib/api";
 import { filmReels, getReelMovies } from "@/lib/movies";
 import { useAppStore } from "@/lib/store";
-import type { FilmReel, Movie } from "@/types";
+import type { FeedItem, FilmReel, Movie, MovieFeedItem, TasteProbeFeedItem } from "@/types";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { preloadImages } from "@/lib/image-preload";
 
 export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => void }) {
   const catalog = useAppStore((state) => state.movies);
   const fallbackReel = filmReels.find((item) => item.slug === reelId || item.id === reelId);
   const [reel, setReel] = useState<FilmReel | undefined>(fallbackReel);
-  const [movies, setMovies] = useState<Movie[]>(fallbackReel ? getReelMovies(fallbackReel, catalog) : []);
+  const [feedItems, setFeedItems] = useState<FeedItem[]>(() => movieFeedItems(fallbackReel ? getReelMovies(fallbackReel, catalog) : []));
+  const movies = feedItems.flatMap((item) => item.kind === "movie" ? [item.movie] : []);
   const [index, setIndex] = useState(0);
+  const [swipeCount, setSwipeCount] = useState(0);
+  const [probeMovie, setProbeMovie] = useState<Movie | null>(null);
+  const [sessionId] = useState(() => typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `session-${Date.now()}`);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [committing, setCommitting] = useState<"left" | "right" | null>(null);
+  const [backdropMovie, setBackdropMovie] = useState<Movie | undefined>();
   const isFavorite = useAppStore((state) => state.isFavorite);
-  const toggleFavorite = useAppStore((state) => state.toggleFavorite);
 
   useEffect(() => {
     let active = true; setLoading(true);
-    api.reelFeed(reelId).then((response) => { if (!active) return; const mapped = (response.items ?? response.results ?? []).map(mapApiMovie); setReel(mapApiReel(response.reel)); setMovies(mapped); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active && fallbackReel) setMovies(getReelMovies(fallbackReel, catalog)); }).finally(() => { if (active) setLoading(false); });
+    api.reelFeed(reelId).then(async (response) => { if (!active) return; const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? []; const mapped = raw.map(mapApiMovie); await preloadMovies(mapped); if (!active) return; setReel(mapApiReel(response.reel)); setFeedItems(movieFeedItems(mapped)); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active && fallbackReel) setFeedItems(movieFeedItems(getReelMovies(fallbackReel, catalog))); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [reelId]);
 
@@ -33,10 +37,34 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
   const commit = useCallback((direction: "left" | "right") => {
     if (!current || committing) return;
     setCommitting(direction);
-    if (getToken()) void api.action({ tmdbId: current.id, isSeries: current.type === "series", actionType: direction === "right" ? "swipe_right" : "swipe_left", idempotencyKey: `swipe:${current.type}:${current.id}:${Date.now()}` }).catch(() => undefined);
-    if (direction === "right" && !isFavorite(current.id, current.type === "series")) { toggleFavorite(current.id, current.type === "series"); toast.success(`«${current.title}» в избранном`); }
+    const nextSwipeCount = swipeCount + 1;
+    setSwipeCount(nextSwipeCount);
+    if (getToken()) void api.action({ tmdbId: current.id, isSeries: current.type === "series", actionType: direction === "right" ? "swipe_right" : "skip", sessionId, idempotencyKey: `swipe:${current.type}:${current.id}:${Date.now()}` }).catch(() => undefined);
+    if (nextSwipeCount % 15 === 0) {
+      setProbeMovie(current);
+      setFeedItems((rows) => [...rows, { kind: "taste_probe", probeId: `${sessionId}:${nextSwipeCount}`, movieId: current.id, prompt: `Что думаешь о «${current.title}»?`, options: ["more_like_this", "less_like_this", "not_for_me", "already_watched", "rate_inline"] }]);
+    }
+    const nextMovie = movies[index + 1];
+    if (nextMovie) setBackdropMovie(nextMovie);
     window.setTimeout(() => { setIndex((value) => value + 1); setCommitting(null); }, 260);
-  }, [current, committing, isFavorite, toggleFavorite]);
+  }, [current, committing, index, movies, sessionId, swipeCount]);
+
+  const refreshTail = useCallback(async () => {
+    try {
+      const response = await api.reelFeed(reelId);
+      const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? [];
+      const incoming = raw.map(mapApiMovie);
+      await preloadMovies(incoming);
+      setFeedItems((rows) => mergeFeedItems(rows.filter((item): item is MovieFeedItem => item.kind === "movie").slice(0, index + 1), incoming));
+      setNextCursor(response.nextCursor ?? null);
+    } catch { /* A stale tail is safer than interrupting an active deck. */ }
+  }, [index, reelId]);
+
+  const submitProbe = useCallback((actionType: "more_like_this" | "less_like_this" | "not_for_me" | "already_watched" | "rate_inline", value?: number) => {
+    if (!probeMovie) return;
+    if (getToken()) void api.action({ tmdbId: probeMovie.id, isSeries: probeMovie.type === "series", actionType, value, sessionId, idempotencyKey: `probe:${sessionId}:${probeMovie.type}:${probeMovie.id}:${actionType}:${value ?? ""}` }).catch(() => undefined);
+    if (actionType !== "already_watched") { setProbeMovie(null); setFeedItems((rows) => rows.filter((item) => item.kind !== "taste_probe" || item.movieId !== probeMovie.id)); void refreshTail(); }
+  }, [probeMovie, refreshTail, sessionId]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "ArrowLeft") commit("left"); if (event.key === "ArrowRight") commit("right"); };
@@ -46,15 +74,16 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
   useEffect(() => {
     if (index < movies.length - 4 || !nextCursor) return;
     const cursor = nextCursor; setNextCursor(null);
-    void api.reelFeed(reelId, cursor).then((response) => { const incoming = (response.items ?? response.results ?? []).map(mapApiMovie); setMovies((rows) => merge(rows, incoming)); setNextCursor(response.nextCursor ?? null); });
+    void api.reelFeed(reelId, cursor).then(async (response) => { const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? []; const incoming = raw.map(mapApiMovie); await preloadMovies(incoming); setFeedItems((rows) => mergeFeedItems(rows, incoming)); setNextCursor(response.nextCursor ?? null); });
   }, [index, movies.length, nextCursor, reelId]);
 
   if (loading && !current) return <Status text="Собираем персональную киноплёнку…"/>;
   if (!reel || !current) return <Status text={index ? "Киноплёнка закончилась" : "В этой киноплёнке пока нет фильмов"} back/>;
   return <div className="relative">
-    {current.backdropUrl && <div className="fixed inset-0 pointer-events-none"><img key={`${current.type}:${current.id}`} src={current.backdropUrl} alt="" className="h-full w-full object-cover opacity-45"/><div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/60 to-background"/></div>}
+    <div className="fixed inset-0 pointer-events-none overflow-hidden"><AnimatePresence initial={false} mode="sync"><motion.img key={`${(backdropMovie ?? current).type}:${(backdropMovie ?? current).id}`} src={(backdropMovie ?? current).backdropUrl ?? (backdropMovie ?? current).posterUrl ?? undefined} alt="" initial={{ opacity: 0, scale: 1.035 }} animate={{ opacity: .46, scale: 1 }} exit={{ opacity: 0, scale: 1.015 }} transition={{ duration: .38, ease: "easeOut" }} className="absolute inset-0 h-full w-full object-cover"/></AnimatePresence><div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/65 to-background"/></div>
     <div className="relative z-10"><div className="flex items-center justify-between mb-4"><Link href="/" onClick={onExit} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-white"><ChevronLeft className="h-4 w-4"/>К киноплёнкам</Link><div className="text-right"><h1 className="font-semibold">{reel.title}</h1><p className="text-xs text-muted-foreground">{reel.subtitle}</p></div></div>
-      <div className="relative mx-auto max-w-md h-[min(620px,calc(100vh-260px))] min-h-[430px]">{movies[index + 2] && <Layer movie={movies[index + 2]} className="scale-90 opacity-30"/>}{movies[index + 1] && <Layer movie={movies[index + 1]} className="scale-95 opacity-60"/>}<SwipeCard key={`${current.type}:${current.id}`} movie={current} favorite={isFavorite(current.id, current.type === "series")} committing={committing} onCommit={commit}/></div>
+      {probeMovie && <TasteProbe movie={probeMovie} onFeedback={submitProbe}/>}
+      <div className="relative mx-auto max-w-md h-[min(620px,calc(100vh-260px))] min-h-[430px]"><AnimatePresence initial={false} mode="sync">{movies[index + 2] && <Layer key={`layer:${movies[index + 2].type}:${movies[index + 2].id}`} movie={movies[index + 2]} className="scale-90 opacity-30"/>}{movies[index + 1] && <Layer key={`layer:${movies[index + 1].type}:${movies[index + 1].id}`} movie={movies[index + 1]} className="scale-95 opacity-60"/>}</AnimatePresence><SwipeCard key={`${current.type}:${current.id}`} movie={current} favorite={isFavorite(current.id, current.type === "series")} committing={committing} onCommit={commit}/></div>
       <div className="mt-6 flex justify-center items-center gap-4"><Action label="Пропустить" className="h-16 w-16 text-skip border-skip/40" disabled={Boolean(committing)} onClick={() => commit("left")}><X className="h-7 w-7"/></Action><Link aria-label="Подробнее" href={`/movie/${current.id}${current.type === "series" ? "?series=1" : ""}`} className="h-12 w-12 rounded-full border border-white/20 grid place-items-center hover:bg-white hover:text-black"><Info className="h-5 w-5"/></Link><Action label="В избранное" className="h-16 w-16 text-like border-like/40" disabled={Boolean(committing)} onClick={() => commit("right")}><Heart className="h-7 w-7"/></Action></div>
     </div>
   </div>;
@@ -71,8 +100,16 @@ function SwipeCard({ movie, favorite, committing, onCommit }: { movie: Movie; fa
       </div></div>
   </motion.article>;
 }
-function Layer({ movie, className }: { movie: Movie; className: string }) { return <div className={cn("absolute inset-0 overflow-hidden rounded-3xl bg-zinc-900", className)}>{movie.posterUrl && <img src={movie.posterUrl} alt="" className="h-full w-full object-cover"/>}</div>; }
+function Layer({ movie, className }: { movie: Movie; className: string }) { return <motion.div initial={{ opacity: 0, scale: .84, y: 18 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: .96, y: -12 }} transition={{ duration: .32, ease: "easeOut" }} className={cn("absolute inset-0 overflow-hidden rounded-3xl bg-zinc-900", className)}>{movie.posterUrl && <img src={movie.posterUrl} alt="" draggable={false} className="h-full w-full object-cover"/>}</motion.div>; }
 function Action({ label, onClick, disabled, className, children }: { label: string; onClick: () => void; disabled: boolean; className: string; children: React.ReactNode }) { return <button aria-label={label} disabled={disabled} onClick={onClick} className={cn("rounded-full border-2 grid place-items-center transition hover:scale-105 disabled:opacity-40", className)}>{children}</button>; }
 function Status({ text, back }: { text: string; back?: boolean }) { return <div className="py-24 text-center text-muted-foreground"><p>{text}</p>{back && <Link href="/" className="mt-4 inline-block text-rating">К киноплёнкам</Link>}</div>; }
+function TasteProbe({ movie, onFeedback }: { movie: Movie; onFeedback: (action: "more_like_this" | "less_like_this" | "not_for_me" | "already_watched" | "rate_inline", value?: number) => void }) {
+  const [rating, setRating] = useState(false);
+  const probe: TasteProbeFeedItem = { kind: "taste_probe", probeId: `${movie.type}:${movie.id}`, movieId: movie.id, prompt: `Что думаешь о «${movie.title}»?`, options: ["more_like_this", "less_like_this", "not_for_me", "already_watched", "rate_inline"] };
+  return <div className="mb-4 rounded-2xl border border-rating/30 bg-background/85 p-4 text-sm backdrop-blur"><p className="font-medium">{probe.prompt}</p>{rating ? <div className="mt-3 flex flex-wrap gap-1">{Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <button key={value} type="button" onClick={() => onFeedback("rate_inline", value)} className="h-8 w-8 rounded-full border border-white/20 hover:border-rating hover:text-rating">{value}</button>)}</div> : <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => onFeedback("more_like_this")} className="rounded-full border border-like/40 px-3 py-1.5 text-like">Больше такого</button><button type="button" onClick={() => onFeedback("less_like_this")} className="rounded-full border border-skip/40 px-3 py-1.5 text-skip">Меньше такого</button><button type="button" onClick={() => onFeedback("not_for_me")} className="rounded-full border border-white/20 px-3 py-1.5">Не моё</button><button type="button" onClick={() => { onFeedback("already_watched"); setRating(true); }} className="rounded-full border border-white/20 px-3 py-1.5">Уже смотрел</button><button type="button" onClick={() => setRating(true)} className="rounded-full border border-rating/40 px-3 py-1.5 text-rating">Оценить</button></div>}</div>;
+}
 function formatDuration(value: number) { const hours = Math.floor(value / 60); const minutes = value % 60; return hours ? `${hours} ч${minutes ? ` ${minutes} мин` : ""}` : `${minutes} мин`; }
+function movieFeedItems(movies: Movie[]): MovieFeedItem[] { return movies.map((movie) => ({ kind: "movie", movie })); }
+function mergeFeedItems(current: FeedItem[], incoming: Movie[]): FeedItem[] { const probes = current.filter((item) => item.kind === "taste_probe"); const map = new Map(current.filter((item): item is MovieFeedItem => item.kind === "movie").map((item) => [`${item.movie.type}:${item.movie.id}`, item])); incoming.forEach((movie) => map.set(`${movie.type}:${movie.id}`, { kind: "movie", movie })); return [...map.values(), ...probes]; }
 function merge(current: Movie[], incoming: Movie[]) { const map = new Map(current.map((movie) => [`${movie.type}:${movie.id}`, movie])); incoming.forEach((movie) => map.set(`${movie.type}:${movie.id}`, movie)); return [...map.values()]; }
+function preloadMovies(movies: Movie[]) { return preloadImages(movies.slice(0, 8).flatMap((movie) => [movie.posterUrl, movie.backdropUrl])); }

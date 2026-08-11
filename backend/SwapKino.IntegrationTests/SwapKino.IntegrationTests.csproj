@@ -15,6 +15,5 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../SwapKino.Api/SwapKino.Api.csproj" />
-    <ProjectReference Include="../SwapKino.Worker/SwapKino.Worker.csproj" Aliases="worker" />
   </ItemGroup>
 </Project>

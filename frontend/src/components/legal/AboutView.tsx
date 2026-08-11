@@ -1,0 +1,9 @@
+"use client";
+import { ArrowLeft, ExternalLink } from "lucide-react";
+import { motion } from "framer-motion";
+import { useAppStore } from "@/lib/store";
+
+export function AboutView() {
+  const setView = useAppStore((s) => s.setView);
+  return <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-8"><button onClick={() => setView({ name: "feed" })} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-6"><ArrowLeft className="h-3.5 w-3.5" />На главную</button><motion.article initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-panel rounded-3xl p-6 sm:p-10"><h1 className="text-2xl font-bold">О проекте и Credits</h1><p className="mt-2 text-sm text-muted-foreground">СвайпКино — open-source сервис для поиска фильма на вечер.</p><div className="mt-8 space-y-6 text-sm leading-relaxed"><section><h2 className="font-bold text-base mb-2">The Movie Database (TMDB)</h2><img src="/tmdb-logo.svg" alt="The Movie Database (TMDB)" className="h-10 w-auto mb-3" /><p>Этот продукт использует TMDB API, но не одобрен и не сертифицирован TMDB. Метаданные и изображения предоставлены TMDB.</p><a href="https://www.themoviedb.org/about/logos-attribution" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-2 text-rating hover:underline">Официальная атрибуция TMDB <ExternalLink className="h-3.5 w-3.5" /></a></section><section><h2 className="font-bold text-base mb-2">Программное обеспечение</h2><p>Исходный код доступен на <a href="https://github.com/Vlan3ik/SwapKino" target="_blank" rel="noopener noreferrer" className="text-rating hover:underline">GitHub</a> по лицензии MIT. Права на медиаматериалы описаны на странице <a href="/copyright" className="text-rating hover:underline">Правообладателям / Copyright</a>.</p></section></div></motion.article></div>;
+}

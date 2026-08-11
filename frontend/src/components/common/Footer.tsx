@@ -1,8 +1,9 @@
 "use client";
 
-import { Flame, Github, ExternalLink, Heart, FileText, Shield, ScrollText } from "lucide-react";
+import { Github, ExternalLink, Heart, FileText, Shield, ScrollText, Copyright } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { BrandMark } from "./BrandMark";
 
 export function Footer() {
   return (
@@ -17,10 +18,7 @@ export function Footer() {
             >
               <div className="relative">
                 <div className="absolute inset-0 bg-rating/30 blur-lg rounded-full" />
-                <Flame
-                  className="relative h-6 w-6 text-rating"
-                  fill="currentColor"
-                />
+                <BrandMark className="relative h-6 w-6" />
               </div>
               <span className="text-lg font-bold tracking-tight">
                 СвайпКино
@@ -117,6 +115,18 @@ export function Footer() {
                   Условия использования
                 </Link>
               </li>
+              <li>
+                <Link href="/copyright" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
+                  <Copyright className="h-3.5 w-3.5" />
+                  Правообладателям / Copyright
+                </Link>
+              </li>
+              <li>
+                <Link href="/about" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  О проекте и Credits
+                </Link>
+              </li>
             </ul>
           </div>
         </div>
@@ -147,7 +157,7 @@ export function Footer() {
               rel="noopener noreferrer"
               className="px-2 py-0.5 rounded-md bg-white/5 border border-white/5 text-[10px] font-medium text-muted-foreground/80 hover:text-foreground transition-colors"
             >
-              TMDB
+              <img src="/tmdb-logo.svg" alt="TMDB" className="h-3 w-auto" />
             </a>
           </div>
         </div>

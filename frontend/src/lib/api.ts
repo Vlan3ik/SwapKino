@@ -7,6 +7,7 @@ export interface ApiUser {
   id: string;
   email: string;
   displayName?: string | null;
+  avatarUrl?: string | null;
   createdAt?: string | null;
 }
 
@@ -22,6 +23,42 @@ export interface ApiLibraryItem {
   favorite?: boolean;
   watched?: boolean;
   suppressedUntil?: string | null;
+}
+
+export interface ApiLibraryPage {
+  items: ApiLibraryItem[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  nextCursor?: string | null;
+}
+
+export interface LibraryQuery {
+  cursor?: string | null;
+  page?: number;
+  limit?: number;
+  q?: string;
+  genreIds?: number[];
+  minRating?: number;
+  yearFrom?: number;
+  yearTo?: number;
+  isSeries?: boolean;
+  sort?: "recent" | "oldest" | "rating" | "title" | "newest";
+  signal?: AbortSignal;
+}
+
+export interface ApiProfile {
+  user: ApiUser;
+  statistics: {
+    favoritesCount: number;
+    ratingsCount: number;
+    watchedCount: number;
+    libraryCount: number;
+    averageRating: number;
+  };
+  previews: { favorites: ApiLibraryItem[]; ratings: ApiLibraryItem[] };
 }
 
 export interface ApiMovie {
@@ -55,6 +92,8 @@ export interface ApiMoviePlayer {
   provider: string;
   name: string;
   embedUrl: string | null;
+  embed?: { publisherId: string; type: string; id: string } | null;
+  status?: string;
   available: boolean;
 }
 
@@ -114,6 +153,7 @@ export interface MoviePage {
 
 export interface CatalogQuery {
   cursor?: string | null;
+  page?: number;
   limit?: number;
   q?: string;
   genreIds?: number[];
@@ -140,9 +180,14 @@ export interface ReelFeed {
   reel: ApiReel;
   feedSessionId?: string;
   items: ApiMovie[];
+  feedItems?: ApiFeedItem[];
   results?: ApiMovie[];
   nextCursor?: string | null;
 }
+
+export type ApiFeedItem =
+  | { kind: "movie"; movie: ApiMovie }
+  | { kind: "taste_probe"; probeId: string; movieId: number; prompt: string; options: string[] };
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -158,7 +203,7 @@ export function setToken(token: string | null) {
 async function request<T>(path: string, init: RequestInit = {}, allowRefresh = true): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (init.body && !headers.has("Content-Type")) {
+  if (init.body && !headers.has("Content-Type") && !(typeof FormData !== "undefined" && init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
   const token = getToken();
@@ -217,15 +262,26 @@ async function request<T>(path: string, init: RequestInit = {}, allowRefresh = t
 }
 
 export const api = {
-  register: (payload: { email: string; password: string; displayName: string }) =>
+  register: (payload: { email: string; password: string; displayName: string; privacyConsent: boolean }) =>
     request<AuthResponse>("/auth/register", { method: "POST", body: JSON.stringify(payload) }),
   login: (payload: { email: string; password: string }) =>
     request<AuthResponse>("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<ApiUser>("/auth/me"),
+  profile: () => request<ApiProfile>("/profile"),
+  updateProfile: (payload: { displayName?: string; avatarUrl?: string }) =>
+    request<ApiUser>("/profile", { method: "PATCH", body: JSON.stringify(payload) }),
+  uploadAvatar: async (file: File) => {
+    const body = new FormData(); body.append("file", file);
+    return request<ApiUser>("/profile/avatar", { method: "POST", body });
+  },
+  deleteAvatar: () => request<void>("/profile/avatar", { method: "DELETE" }),
+  changePassword: (payload: { currentPassword: string; newPassword: string }) =>
+    request<void>("/auth/password", { method: "POST", body: JSON.stringify(payload) }),
   movies: (query: CatalogQuery | number = {}) => {
     const normalized: CatalogQuery = typeof query === "number" ? { cursor: query > 1 ? String(query) : undefined } : query;
     const params = new URLSearchParams();
     if (normalized.cursor) params.set("cursor", normalized.cursor);
+    if (normalized.page != null) params.set("page", String(normalized.page));
     params.set("limit", String(normalized.limit ?? 20));
     if (normalized.q) params.set("q", normalized.q);
     if (normalized.genreIds?.length) params.set("genreIds", normalized.genreIds.join(","));
@@ -242,6 +298,8 @@ export const api = {
   recommendations: (page = 1) =>
     request<{ page: number; results: ApiMovie[] }>(`/recommendations?page=${page}`),
   library: () => request<{ items: ApiLibraryItem[] }>("/library"),
+  favorites: (query: LibraryQuery = {}) => request<ApiLibraryPage>(`/favorites?${libraryParams(query)}`, { signal: query.signal }),
+  ratings: (query: LibraryQuery = {}) => request<ApiLibraryPage>(`/ratings?${libraryParams(query)}`, { signal: query.signal }),
   reels: () => request<{ items?: ApiReel[]; results?: ApiReel[] } | ApiReel[]>("/reels"),
   reelFeed: (slug: string, cursor?: string | null, limit = 20) => {
     const params = new URLSearchParams({ limit: String(limit) });
@@ -251,9 +309,10 @@ export const api = {
   action: (payload: {
     tmdbId: number;
     isSeries?: boolean;
-    actionType: string;
+    actionType: "impression" | "favorite" | "unfavorite" | "rate" | "rating" | "unrate" | "skip" | "swipe_left" | "swipe_right" | "not_interested" | "watched" | "unwatched" | "more_like_this" | "less_like_this" | "not_for_me" | "already_watched" | "rate_inline";
     value?: number;
     idempotencyKey: string;
+    sessionId?: string;
   }) => request<{ id: string; duplicate: boolean }>("/actions", { method: "POST", body: JSON.stringify(payload) }),
   importProfile: (profileUrl: string) =>
     request<{ id: string; status: string; progress: number }>("/imports", {
@@ -264,7 +323,23 @@ export const api = {
   importResume: (id: string) => request<ImportStatus>(`/imports/${id}/resume`, { method: "POST" }),
   importCancel: (id: string) => request<ImportStatus>(`/imports/${id}/cancel`, { method: "POST" }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
+  deleteAccount: () => request<void>("/account", { method: "DELETE" }),
 };
+
+function libraryParams(query: LibraryQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  if (query.cursor) params.set("cursor", query.cursor);
+  params.set("page", String(query.page ?? 1));
+  params.set("limit", String(query.limit ?? 20));
+  if (query.q) params.set("q", query.q);
+  if (query.genreIds?.length) params.set("genreIds", query.genreIds.join(","));
+  if (query.minRating != null) params.set("minRating", String(query.minRating));
+  if (query.yearFrom != null) params.set("yearFrom", String(query.yearFrom));
+  if (query.yearTo != null) params.set("yearTo", String(query.yearTo));
+  if (query.isSeries != null) params.set("isSeries", String(query.isSeries));
+  if (query.sort) params.set("sort", query.sort);
+  return params;
+}
 
 export function mapApiMovie(movie: ApiMovie): Movie {
   const payload = movie.payload ?? {};

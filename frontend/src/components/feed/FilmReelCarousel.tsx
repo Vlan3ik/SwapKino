@@ -8,12 +8,15 @@ import { api, mapApiReel } from "@/lib/api";
 import type { FilmReel } from "@/types";
 import { cn } from "@/lib/utils";
 import { ArtworkImage } from "@/components/common/ArtworkImage";
+import { preloadImages } from "@/lib/image-preload";
 
 export function FilmReelCarousel() {
   const [reels, setReels] = useState<FilmReel[]>([]);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [compact, setCompact] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(1440);
   const requestId = useRef(0);
   const load = useCallback(async () => {
     const id = ++requestId.current;
@@ -23,8 +26,13 @@ export function FilmReelCarousel() {
       const response = await api.reels();
       if (id !== requestId.current) return;
       const rows = Array.isArray(response) ? response : response.items ?? response.results ?? [];
-      setReels(rows.map(mapApiReel));
+      const mapped = rows.map(mapApiReel);
+      if (id !== requestId.current) return;
+      setReels(mapped);
       setIndex(0);
+      // Не блокируем первый экран загрузкой всех обложек. Ближайшие карточки
+      // прогреваем после публикации данных, остальные загрузятся лениво.
+      void preloadImages(mapped.slice(0, 3).map((reel) => reel.coverUrl));
     } catch (cause) {
       if (id !== requestId.current) return;
       setReels([]);
@@ -34,25 +42,31 @@ export function FilmReelCarousel() {
     }
   }, []);
   useEffect(() => { void load(); return () => { requestId.current += 1; }; }, [load]);
+  useEffect(() => {
+    const update = () => { setViewportWidth(window.innerWidth); setCompact(window.innerWidth < 900); };
+    update(); window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
   const go = useCallback((direction: number) => setIndex((current) => reels.length ? (current + direction + reels.length) % reels.length : 0), [reels.length]);
   useEffect(() => { const onKey = (event: KeyboardEvent) => { if (event.key === "ArrowLeft") go(-1); if (event.key === "ArrowRight") go(1); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [go]);
-  const current = reels[index];
-  const cover = current?.coverUrl;
-  const visible = reels.map((item, itemIndex) => { let position = itemIndex - index; if (position > reels.length / 2) position -= reels.length; if (position < -reels.length / 2) position += reels.length; return { item, itemIndex, position }; }).filter(({ position }) => Math.abs(position) <= 2);
+  const visibleLimit = compact ? 1 : 2;
+  const cardWidth = compact ? Math.min(320, viewportWidth - 48) : Math.min(440, Math.max(340, viewportWidth * 0.27));
+  const cardOffset = compact ? Math.min(260, cardWidth + 20) : Math.min(340, Math.max(220, (viewportWidth - cardWidth - 80) / 4));
+  const visible = reels.map((item, itemIndex) => { let position = itemIndex - index; if (position > reels.length / 2) position -= reels.length; if (position < -reels.length / 2) position += reels.length; return { item, itemIndex, position }; }).filter(({ position }) => Math.abs(position) <= visibleLimit);
 
-  return <section className="relative overflow-hidden rounded-3xl min-h-[650px]">
-    {cover && <ArtworkImage src={cover} title={current.title} alt="" className="absolute inset-0 -z-10 h-full w-full object-cover opacity-20 blur-xl scale-110"/>}<div className="absolute inset-0 -z-10 bg-gradient-to-b from-background/20 to-background"/>
-    <header className="flex items-end justify-between p-6 sm:p-9"><div><h1 className="text-3xl font-bold">Киноплёнки</h1><p className="text-sm text-muted-foreground mt-1">Выбери настроение, остальное мы соберём сами</p></div>{reels.length > 1 && !loading && !error && <div className="flex gap-2"><Arrow label="Предыдущая" onClick={() => go(-1)}><ChevronLeft/></Arrow><Arrow label="Следующая" onClick={() => go(1)}><ChevronRight/></Arrow></div>}</header>
+  return <section className="relative isolate min-h-[calc(100svh-5.5rem)] overflow-hidden rounded-3xl">
+    <div className="absolute inset-0 z-10 bg-gradient-to-b from-background/20 via-background/65 to-background"/>
+    <header className="relative z-20 flex items-end justify-between p-6 sm:p-9"><div><h1 className="text-3xl font-bold">Киноплёнки</h1><p className="text-sm text-muted-foreground mt-1">Выбери настроение, остальное мы соберём сами</p></div>{reels.length > 1 && !loading && !error && <div className="flex gap-2"><Arrow label="Предыдущая" onClick={() => go(-1)}><ChevronLeft/></Arrow><Arrow label="Следующая" onClick={() => go(1)}><ChevronRight/></Arrow></div>}</header>
     {loading ? <ReelsLoading/> : error ? <ReelsMessage title="Не удалось загрузить киноплёнки" text={error} onRetry={() => void load()}/> : reels.length === 0 ? <ReelsMessage title="Киноплёнок пока нет" text="Подборки ещё не настроены или временно недоступны." onRetry={() => void load()}/> :
-    <motion.div drag="x" dragConstraints={{ left: 0, right: 0 }} dragElastic={0.15} onDragEnd={(_: unknown, info: PanInfo) => { if (info.offset.x < -80) go(1); if (info.offset.x > 80) go(-1); }} className="relative h-[520px] flex items-center justify-center cursor-grab">
-      {visible.map(({ item, itemIndex, position }) => <ReelCard key={item.slug} reel={item} position={position} cover={item.coverUrl} onSide={() => setIndex(itemIndex)}/>) }
+    <motion.div drag="x" dragConstraints={{ left: 0, right: 0 }} dragElastic={0.15} onDragEnd={(_: unknown, info: PanInfo) => { if (info.offset.x < -80) go(1); if (info.offset.x > 80) go(-1); }} className="relative z-20 h-[calc(100svh-14rem)] min-h-[560px] flex items-center justify-center cursor-grab">
+      {visible.map(({ item, itemIndex, position }) => <ReelCard key={item.slug} reel={item} position={position} cover={item.coverUrl} compact={compact} offset={cardOffset} width={cardWidth} onSide={() => setIndex(itemIndex)}/>) }
     </motion.div>}
   </section>;
 }
 
-function ReelCard({ reel, position, cover, onSide }: { reel: FilmReel; position: number; cover: string | null | undefined; onSide: () => void }) {
+function ReelCard({ reel, position, cover, compact, offset, width, onSide }: { reel: FilmReel; position: number; cover: string | null | undefined; compact: boolean; offset: number; width: number; onSide: () => void }) {
   const center = position === 0; const distance = Math.abs(position);
-  return <motion.article animate={{ x: position * 320, rotateY: position * -25, scale: center ? 1 : .78, opacity: 1 - distance * .25, z: -distance * 220 }} transition={{ type: "spring", stiffness: 230, damping: 30 }} style={{ transformStyle: "preserve-3d", zIndex: 20 - distance }} onClick={center ? undefined : onSide} className={cn("absolute h-[470px] w-[310px] sm:w-[380px] rounded-3xl overflow-hidden border border-white/10 shadow-cinematic", !center && "cursor-pointer")}>
+  return <motion.article animate={{ x: position * offset, rotateY: position * (compact ? -14 : -16), scale: center ? 1 : distance === 1 ? .82 : .68, opacity: center ? 1 : distance === 1 ? .82 : .58, z: -distance * 150 }} transition={{ type: "spring", stiffness: 230, damping: 30 }} style={{ transformStyle: "preserve-3d", zIndex: 20 - distance, width, height: compact ? 500 : "clamp(500px, 64vh, 620px)" }} onClick={center ? undefined : onSide} className={cn("absolute rounded-3xl overflow-hidden border border-white/10 shadow-cinematic", !center && "cursor-pointer")}>
     <ArtworkImage src={cover} title={reel.title} fallbackLabel="Обложка не загружена" alt="" draggable={false} className="absolute inset-0 h-full w-full object-cover"/><div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"/><div className="absolute inset-x-0 bottom-0 p-7"><h2 className="text-3xl font-bold leading-tight">{reel.title}</h2><p className="mt-2 text-sm text-white/70">{reel.subtitle}</p>{center && <Link href={`/reels/${reel.slug}`} className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-black hover:bg-rating"><Play className="h-4 w-4 fill-current"/>Начать ленту</Link>}</div>
   </motion.article>;
 }

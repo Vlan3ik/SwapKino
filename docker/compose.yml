@@ -2,7 +2,7 @@ name: swapkino
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: swapkino
       POSTGRES_USER: swapkino
@@ -47,11 +47,16 @@ services:
       REDIS_URL: redis-runtime:6379,abortConnect=false
       REDIS_CACHE_URL: redis-cache:6379,abortConnect=false
       SELENIUM_URL: http://selenium-service:8081
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio-secret-change-me
+      MINIO_BUCKET: swapkino-uploads
+      MINIO_PUBLIC_URL: http://localhost:9000
       CORS_ORIGINS: http://localhost,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:3000
-      CATALOG_WARMUP_PAGES: 50
-      CATALOG_TOP_RATED_PAGES: 25
-      CATALOG_SYNC_INTERVAL_HOURS: 6
+      CATALOG_SYNC_INTERVAL_SECONDS: 12
+      CATALOG_PAGES_PER_CYCLE: 1
       TMDB_ALLOW_FALLBACK: "false"
+      VIBIX_TMDB_PATH_TEMPLATE: ${VIBIX_TMDB_PATH_TEMPLATE:-api/v1/publisher/videos/tmdb/{0}}
     expose: ["8000"]
     depends_on: {postgres: {condition: service_healthy}, redis-runtime: {condition: service_started}}
     mem_limit: 512m
@@ -89,6 +94,8 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     expose: ["3000"]
     environment:
       NODE_ENV: production

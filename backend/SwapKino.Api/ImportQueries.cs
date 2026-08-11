@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using SwapKino.Api;
+
+namespace SwapKino.Api;
 
 public static class ImportQueries
 {

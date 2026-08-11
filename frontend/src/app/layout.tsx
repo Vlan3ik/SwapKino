@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { AppShell } from "@/components/common/AppShell";
+import Script from "next/script";
 
 export const metadata: Metadata = {
   title: "СвайпКино — найди фильм на вечер",
@@ -10,7 +11,11 @@ export const metadata: Metadata = {
   keywords: ["СвайпКино", "фильмы", "подбор", "свайпы", "кино"],
   authors: [{ name: "СвайпКино" }],
   icons: {
-    icon: "/logo.svg",
+    icon: [
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon.ico" },
+    ],
+    apple: "/app-icons/apple-touch-icon.png",
   },
   openGraph: {
     title: "СвайпКино",
@@ -27,8 +32,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" className="dark" suppressHydrationWarning>
+      <head>
+        <Script src="https://graphicslab.io/sdk/v2/rendex-sdk.min.js" strategy="beforeInteractive" />
+        <Script src="https://v-js-menu.run/public/lib.en.min.js" strategy="afterInteractive" />
+      </head>
       <body className="antialiased bg-background text-foreground min-h-screen">
         <AppShell>{children}</AppShell>
+        <ins id="vibix_union" data-publisher_id="678712186" data-add_types="banners" />
         <Toaster />
       </body>
     </html>

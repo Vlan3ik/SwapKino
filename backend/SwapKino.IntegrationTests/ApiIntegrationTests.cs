@@ -1,5 +1,3 @@
-extern alias worker;
-
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -17,7 +15,7 @@ namespace SwapKino.IntegrationTests;
 [Collection("api-integration")]
 public sealed class ApiIntegrationTests : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer postgres = new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
+    private readonly PostgreSqlContainer postgres = new PostgreSqlBuilder().WithImage("pgvector/pgvector:pg16").Build();
     private readonly RedisContainer redis = new RedisBuilder().WithImage("redis:7-alpine").Build();
     private SwapKinoApiFactory factory = null!;
     private HttpClient client = null!;
@@ -52,6 +50,8 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
 
         await using var connection = new NpgsqlConnection(postgres.GetConnectionString());
         await connection.OpenAsync();
+        await using var migrations = new NpgsqlCommand("SELECT count(*) FROM \"__EFMigrationsHistory\"", connection);
+        Assert.True((long)(await migrations.ExecuteScalarAsync())! >= 6);
         await using var command = new NpgsqlCommand("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('AspNetUserRoles','AspNetUserClaims','AspNetUserLogins','AspNetUserTokens','AspNetRoleClaims')", connection);
         Assert.Equal(5L, (long)(await command.ExecuteScalarAsync())!);
     }
@@ -167,7 +167,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
 
-        var query=worker::ImportQueries.LightweightMovies(db.Movies.AsNoTracking().Where(x=>x.TmdbId==6201));
+        var query=ImportQueries.LightweightMovies(db.Movies.AsNoTracking().Where(x=>x.TmdbId==6201));
         Assert.DoesNotContain("\"Payload\"",query.ToQueryString(),StringComparison.Ordinal);
         var candidate=await query.SingleAsync();
         Assert.Equal("Lightweight match",candidate.Title);
@@ -184,6 +184,50 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=777,actionType="rating",value=8,idempotencyKey="rate-777"})).StatusCode);
         Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=777,actionType="favorite",value=(double?)null,idempotencyKey="favorite-777"})).StatusCode);
         var library=await client.GetFromJsonAsync<JsonElement>("/api/v1/library");var item=library.GetProperty("items")[0];Assert.Equal(8,item.GetProperty("rating").GetDouble());Assert.True(item.GetProperty("favorite").GetBoolean());Assert.True(item.GetProperty("watched").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Swipe_right_skip_and_dislike_have_distinct_state_effects()
+    {
+        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="signals@example.test",password="IntegrationPass123!",displayName="Signals"})).Content.ReadFromJsonAsync<JsonElement>();
+        client.DefaultRequestHeaders.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",auth.GetProperty("accessToken").GetString());
+        await using(var scope=factory.Services.CreateAsyncScope())
+        {
+            var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
+            db.Movies.AddRange(new Movie{TmdbId=880,Title="Right"},new Movie{TmdbId=881,Title="Skip"},new Movie{TmdbId=882,Title="Dislike"});
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=880,actionType="swipe_right",idempotencyKey="signal-right"})).StatusCode);
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=881,actionType="skip",sessionId="signal-session",idempotencyKey="signal-skip"})).StatusCode);
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=882,actionType="not_for_me",idempotencyKey="signal-dislike"})).StatusCode);
+        await using var verify=factory.Services.CreateAsyncScope();
+        var states=verify.ServiceProvider.GetRequiredService<SwapKinoDbContext>().UserMovieStates.AsNoTracking().Where(x=>x.UserId==Guid.Parse(auth.GetProperty("user").GetProperty("id").GetString()!)&&x.TmdbId>=880).ToList();
+        Assert.False(states.Single(x=>x.TmdbId==880).Favorite);
+        Assert.Null(states.Single(x=>x.TmdbId==881).SuppressedUntil);
+        Assert.NotNull(states.Single(x=>x.TmdbId==882).SuppressedUntil);
+    }
+
+    [Fact]
+    public async Task Profile_favorites_and_ratings_are_paginated_and_include_statistics()
+    {
+        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="profile@example.test",password="IntegrationPass123!",displayName="Profile"})).Content.ReadFromJsonAsync<JsonElement>();
+        client.DefaultRequestHeaders.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",auth.GetProperty("accessToken").GetString());
+        await using(var scope=factory.Services.CreateAsyncScope())
+        {
+            var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
+            db.Movies.AddRange(new Movie{TmdbId=778,Title="Profile favorite",VoteAverage=8,VoteCount=100,ReleaseDate="2024-01-01"},new Movie{TmdbId=779,Title="Profile rating",VoteAverage=7,VoteCount=90,ReleaseDate="2023-01-01"});
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=778,actionType="favorite",idempotencyKey="profile-favorite"})).StatusCode);
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=779,actionType="rating",value=9,idempotencyKey="profile-rating"})).StatusCode);
+        var profile=await client.GetFromJsonAsync<JsonElement>("/api/v1/profile");
+        Assert.Equal(1,profile.GetProperty("statistics").GetProperty("favoritesCount").GetInt32());
+        Assert.Equal(1,profile.GetProperty("statistics").GetProperty("ratingsCount").GetInt32());
+        Assert.Equal(1,profile.GetProperty("previews").GetProperty("favorites").GetArrayLength());
+        var ratings=await client.GetFromJsonAsync<JsonElement>("/api/v1/ratings?limit=1&minRating=6&sort=rating");
+        Assert.Equal(1,ratings.GetProperty("totalCount").GetInt32());
+        Assert.Equal(9,ratings.GetProperty("items")[0].GetProperty("rating").GetDouble());
+        Assert.Equal("Profile rating",ratings.GetProperty("items")[0].GetProperty("movie").GetProperty("title").GetString());
     }
 
     [Fact]
@@ -230,6 +274,21 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         var movie=await db.Movies.SingleAsync(x=>x.TmdbId==8201&&!x.IsSeries);
         Assert.Equal("/poster.jpg",movie.PosterPath);
         Assert.Equal("/backdrop.jpg",movie.BackdropPath);
+    }
+
+    [Fact]
+    public async Task Tmdb_details_persist_keywords_people_and_external_ids()
+    {
+        await using var scope= factory.Services.CreateAsyncScope();
+        var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
+        var body="""{"id":8301,"title":"Tagged movie","overview":"Overview","release_date":"2024-01-01","runtime":110,"vote_average":8,"vote_count":500,"popularity":20,"adult":false,"genres":[{"id":27,"name":"Horror"}],"keywords":{"keywords":[{"id":123,"name":"haunted house"},{"id":456,"name":"survival"}]},"external_ids":{"imdb_id":"tt8301","kinopoisk_id":8301},"credits":{"crew":[{"id":77,"name":"Director One","job":"Director"}],"cast":[{"id":88,"name":"Actor One","character":"Hero","order":0}]}}""";
+        var tmdb=new TmdbClient(new StubHttpClientFactory(body),new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>{{"TMDB_API_KEY","test"}}).Build(),db);
+        await tmdb.Details(8301,CancellationToken.None);
+        db.ChangeTracker.Clear();
+        var movie=await db.Movies.Include(x=>x.MovieKeywords).Include(x=>x.MoviePeople).SingleAsync(x=>x.TmdbId==8301&&!x.IsSeries);
+        Assert.Equal(8301,movie.KinopoiskId); Assert.Equal("tt8301",movie.ImdbId);
+        Assert.Equal(2,movie.MovieKeywords.Count); Assert.Contains(movie.MovieKeywords,x=>x.KeywordId==123);
+        Assert.Contains(movie.MoviePeople,x=>x.Department=="Director"); Assert.Contains(movie.MoviePeople,x=>x.Department=="Actor");
     }
 
     [Fact]

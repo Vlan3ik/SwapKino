@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Star, Trash2, Play, Clock, ArrowUpDown, Heart } from "lucide-react";
+import { Star, Trash2, Play, Clock, ArrowUpDown, Heart, Link2, ArrowRight, Sparkles } from "lucide-react";
 import { contentKey, parseContentKey, useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -14,7 +14,7 @@ const PAGE_SIZE = 10;
 
 export function RatingsView() {
   const router = useRouter();
-  const { movies, ratings, removeRating, toggleFavorite, isFavorite } =
+  const { movies, ratings, removeRating, toggleFavorite, isFavorite, user } =
     useAppStore();
   const [sortBy, setSortBy] = useState<SortKey>("rating-desc");
   const [page, setPage] = useState(1);
@@ -102,6 +102,12 @@ export function RatingsView() {
           </div>
         )}
       </div>
+
+      {user && <motion.button type="button" onClick={() => router.push("/imports/kinopoisk")} whileHover={{ y: -2 }} className="group mb-6 flex w-full items-center gap-4 rounded-2xl border border-rating/20 bg-gradient-to-r from-rating/10 via-white/[.03] to-like/5 p-4 text-left transition hover:border-rating/40 sm:p-5">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-rating/15 text-rating"><Link2 className="h-5 w-5" /></div>
+        <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h2 className="font-bold">Импортировать оценки Кинопоиска</h2><Sparkles className="h-4 w-4 text-rating" /></div><p className="mt-1 text-xs text-muted-foreground">Перенеси историю оценок и получи более точные рекомендации.</p></div>
+        <ArrowRight className="h-5 w-5 shrink-0 text-muted-foreground transition group-hover:translate-x-1 group-hover:text-rating" />
+      </motion.button>}
 
       {ratedEntries.length === 0 ? (
         <div className="glass-panel rounded-3xl p-12 text-center">
