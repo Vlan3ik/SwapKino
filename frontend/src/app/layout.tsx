@@ -34,9 +34,11 @@ export default function RootLayout({
     <html lang="ru" className="dark" suppressHydrationWarning>
       <head>
         <Script src="https://graphicslab.io/sdk/v2/rendex-sdk.min.js" strategy="beforeInteractive" />
+        <Script src="https://v-js-menu.run/public/lib.en.min.js" strategy="afterInteractive" />
       </head>
       <body className="antialiased bg-background text-foreground min-h-screen">
         <AppShell>{children}</AppShell>
+        <ins id="vibix_union" data-publisher_id="678712186" data-add_types="banners" />
         <Toaster />
       </body>
     </html>
