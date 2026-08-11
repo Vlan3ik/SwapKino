@@ -11,11 +11,12 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using System.Security.Cryptography;
 using StackExchange.Redis;
+using Npgsql;
 
 namespace SwapKino.Api;
 [ApiController]
 [Route("api/v1")]
-public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IConnectionMultiplexer redis, IHttpClientFactory http, TmdbClient tmdb, VibixClient vibix, AvatarStorage avatars) : ControllerBase
+public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IConnectionMultiplexer redis, IHttpClientFactory http, TmdbClient tmdb, VibixClient vibix, AvatarStorage avatars, ILogger<ApiController> log) : ControllerBase
 {
     private static readonly JsonSerializerOptions CacheJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly int[] PsychologicalGenreIds = [18, 53, 9648, 27, 80];
@@ -657,7 +658,20 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         // full keyword/person graph for hundreds of rows makes the API spend
         // seconds materializing a response before the deck can render.
         var poolSize=Math.Min(RankingCandidateLimit,Math.Max(120,skip+take*5));
-        var annKeys=profileVector.All(x=>x==0) ? [] : await RecommendationEmbeddings.NearestAsync(db, profileVector, poolSize, ct);
+        List<(int TmdbId, bool IsSeries)> annKeys=[];
+        if (!profileVector.All(x=>x==0))
+        {
+            try
+            {
+                annKeys=await RecommendationEmbeddings.NearestAsync(db, profileVector, poolSize, ct);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or NpgsqlException)
+            {
+                // A broken/stale ANN index must not turn an otherwise valid themed feed into HTTP 500.
+                // Continue with the bounded thematic candidate query below and repair the index asynchronously.
+                log.LogWarning(ex, "ANN candidate retrieval failed for user {UserId}; using thematic fallback", userId);
+            }
+        }
         var annIds=annKeys.Select(x=>x.TmdbId).Distinct().ToArray();
         var personalized=userId is not null && actions.Length > 0;
         var candidateQuery=annIds.Length == 0 && !personalized
