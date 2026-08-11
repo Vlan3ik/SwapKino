@@ -681,6 +681,14 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var candidates=annIds.Length==0 && !personalized
             ? await LightweightMoviesColdStart(candidateQuery).ToListAsync(ct)
             : await LightweightMovies(candidateQuery.AsSplitQuery()).ToListAsync(ct);
+        if (annIds.Length > 0 && candidates.Count < Math.Min(take, 20))
+        {
+            // ANN is global, while a reel is thematic. A small ANN pool can have
+            // no usable items left after the reel filters and user exclusions.
+            // Refill from the same themed query instead of returning an empty deck.
+            log.LogInformation("Refilling {Reel} feed from thematic candidates after ANN pool was exhausted", reel?.Slug);
+            candidates=await LightweightMovies(query.OrderByDescending(x=>x.VoteCount).ThenByDescending(x=>x.VoteAverage).ThenBy(x=>x.TmdbId).Take(poolSize).AsSplitQuery()).ToListAsync(ct);
+        }
         double Match(Movie m)=>.55*SignedAverage(m.MovieGenres.Select(x=>positiveGenre.GetValueOrDefault(x.GenreId)),m.MovieGenres.Select(x=>negativeGenre.GetValueOrDefault(x.GenreId)))+.25*SignedAverage(m.MovieKeywords.Select(x=>positiveKeyword.GetValueOrDefault(x.KeywordId)),m.MovieKeywords.Select(x=>negativeKeyword.GetValueOrDefault(x.KeywordId)))+.15*SignedAverage(m.MoviePeople.Select(x=>positivePerson.GetValueOrDefault(x.PersonId)),m.MoviePeople.Select(x=>negativePerson.GetValueOrDefault(x.PersonId)))+.05*(m.OriginalLanguage is null?0:0.1);
         double Theme(Movie m)=>reel is null?0:reel.Strategy switch{"classic"=>(m.ReleaseDate is not null&&string.Compare(m.ReleaseDate,"2000-01-01")<0?1:0)+m.VoteAverage/10,"trending"=>Math.Min(1,m.Popularity/100),"underrated"=>Math.Clamp(m.VoteAverage/10-Math.Log10(Math.Max(10,m.VoteCount))/20,0,1),"short"=>m.RuntimeMinutes is >0 and <=100?1:0,"sports" or "psychological"=>Math.Min(1,m.MovieKeywords.Count(x=>themeKeywords.Contains(x.KeywordId))/2d),_=>.65*Average(m.MovieGenres.Where(x=>reel.Genres.Contains(x.GenreId)).Select(_=>1d))+.35*Average(m.MovieKeywords.Where(x=>themeKeywords.Contains(x.KeywordId)).Select(_=>1d))};
         double Quality(Movie m)=>Math.Clamp((m.VoteCount/(double)(m.VoteCount+200))*m.VoteAverage/10d+(200d/(m.VoteCount+200))*.65,0,1);
