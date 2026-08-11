@@ -11,7 +11,6 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using System.Security.Cryptography;
 using StackExchange.Redis;
-using Npgsql;
 
 namespace SwapKino.Api;
 [ApiController]
@@ -665,7 +664,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             {
                 annKeys=await RecommendationEmbeddings.NearestAsync(db, profileVector, poolSize, ct);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or NpgsqlException)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // A broken/stale ANN index must not turn an otherwise valid themed feed into HTTP 500.
                 // Continue with the bounded thematic candidate query below and repair the index asynchronously.
