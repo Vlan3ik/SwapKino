@@ -40,6 +40,10 @@ jobs:
           git checkout main
           git reset --hard origin/main
           docker compose -p swapkino-prod -f docker/compose.yml up -d --build --remove-orphans
+          # API/frontend containers are recreated during deploy. Reload nginx so
+          # its upstream DNS entries point at the new container IPs instead of
+          # returning 502 for the old, removed API container.
+          docker compose -p swapkino-prod -f docker/compose.yml restart nginx
           for attempt in $(seq 1 30); do
             if curl -fsS --max-time 5 http://127.0.0.1:18080/ready >/dev/null; then
               exit 0
