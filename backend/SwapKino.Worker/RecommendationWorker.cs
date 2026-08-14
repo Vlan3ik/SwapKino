@@ -39,18 +39,21 @@ public sealed class RecommendationWorker(
             using var document = JsonDocument.Parse(Value(entry, "payload"));
             if (!document.RootElement.TryGetProperty("userId", out var userNode) || !Guid.TryParse(userNode.GetString(), out var userId))
                 throw new InvalidOperationException("recommendations.action has no valid userId");
+            var action = document.RootElement.TryGetProperty("action", out var actionNode) ? actionNode.GetString() ?? "" : "";
+            var tmdbId = document.RootElement.GetProperty("tmdbId").GetInt32();
+            var isSeries = document.RootElement.TryGetProperty("isSeries", out var seriesNode) && seriesNode.GetBoolean();
+            var value = document.RootElement.TryGetProperty("value", out var valueNode) && valueNode.ValueKind == JsonValueKind.Number ? valueNode.GetDouble() : (double?)null;
             using var scope = scopes.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
-            var profile = await RecommendationProfileBuilder.BuildAsync(db, userId, ct);
-            await db.SaveChangesAsync(ct);
-            await database.StringSetAsync($"{RecommendationProfileBuilder.ProfileCachePrefix}{userId}:profile", JsonSerializer.Serialize(profile), TimeSpan.FromHours(24));
+            var gateway = scope.ServiceProvider.GetRequiredService<RecommendationGateway>();
+            var feedback = Normalize(action, value);
+            if (feedback is not null)
+                await gateway.SendFeedbackAsync([new GorseFeedback(feedback, userId.ToString(), RecommendationGateway.ItemId(tmdbId, isSeries), 1, DateTime.UtcNow)], ct);
             if (document.RootElement.TryGetProperty("sessionId", out var sessionNode) && sessionNode.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sessionNode.GetString()))
             {
                 var sessionKey = $"rec:session:{userId}:{sessionNode.GetString()}";
                 await database.HashSetAsync(sessionKey, [
-                    new HashEntry("sessionProfileVersion", profile.ProfileVersion),
-                    new HashEntry("sessionProfileUpdatedAt", DateTime.UtcNow.ToString("O")),
-                    new HashEntry("feedRefreshRequested", 1)
+                    new HashEntry("lastFeedback", action),
+                    new HashEntry("feedRefreshRequested", feedback is "negative" ? 1 : 0)
                 ]);
                 await database.KeyExpireAsync(sessionKey, TimeSpan.FromHours(12));
             }
@@ -62,6 +65,18 @@ public sealed class RecommendationWorker(
             throw;
         }
     }
+
+    private static string? Normalize(string action, double? value) => action switch
+    {
+        "impression" or "watched" or "already_watched" or "skip" or "swipe_left" => "read",
+        "swipe_right" or "favorite" or "more_like_this" => "positive",
+        "not_for_me" or "less_like_this" or "not_interested" => "negative",
+        "rating" or "rate" or "rate_inline" when value >= 9 => "strong_positive",
+        "rating" or "rate" or "rate_inline" when value >= 7 => "positive",
+        "rating" or "rate" or "rate_inline" when value <= 5 => "negative",
+        "rating" or "rate" or "rate_inline" => "read",
+        _ => null
+    };
 
     private async Task EnsureGroup(CancellationToken ct)
     {

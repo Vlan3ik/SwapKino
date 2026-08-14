@@ -9,13 +9,19 @@ using SwapKino.Api;
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddDbContext<SwapKinoDbContext>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Default") ?? builder.Configuration["DATABASE_URL"]));
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(builder.Configuration["REDIS_URL"] ?? "redis-runtime:6379,abortConnect=false"));
+builder.Services.AddHttpClient("gorse", c =>
+{
+    c.BaseAddress = new Uri((builder.Configuration["GORSE_URL"] ?? "http://gorse-server:8087/").TrimEnd('/') + "/");
+    c.Timeout = TimeSpan.FromSeconds(3);
+});
+builder.Services.AddScoped<RecommendationGateway>();
 builder.Services.AddHttpClient("selenium", c => c.BaseAddress = new Uri(builder.Configuration["SELENIUM_URL"] ?? "http://selenium-service:8081"));
 builder.Services.AddHttpClient("tmdb", c => c.BaseAddress = new Uri((builder.Configuration["TMDB_BASE_URL"] ?? "https://api.themoviedb.org/3").TrimEnd('/') + "/"));
 builder.Services.AddScoped<TmdbClient>();
 builder.Services.AddHostedService<OutboxDispatcher>();
 builder.Services.AddHostedService<ImportStreamWorker>();
 builder.Services.AddHostedService<RecommendationWorker>();
-builder.Services.AddHostedService<RecommendationFeatureWorker>();
+builder.Services.AddHostedService<RecommendationCatalogWorker>();
 var host = builder.Build();
 await host.RunAsync();
 

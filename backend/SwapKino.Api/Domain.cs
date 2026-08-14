@@ -31,6 +31,7 @@ public sealed class Movie
     public string Payload { get; set; } = "{}";
     public DateTime SummaryUpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DetailsUpdatedAt { get; set; }
+    public DateTime? RecommendationSyncedAt { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<MovieGenre> MovieGenres { get; set; } = [];
     public ICollection<MovieKeyword> MovieKeywords { get; set; } = [];
@@ -41,7 +42,18 @@ public sealed class MovieGenre { public int TmdbId { get; set; } public bool IsS
 public sealed class Keyword { public int TmdbId { get; set; } public string Name { get; set; } = ""; public string Slug { get; set; } = ""; public ICollection<MovieKeyword> MovieKeywords { get; set; } = []; }
 public sealed class MovieKeyword { public int TmdbId { get; set; } public bool IsSeries { get; set; } public int KeywordId { get; set; } public Movie Movie { get; set; } = null!; public Keyword Keyword { get; set; } = null!; }
 public sealed class MoviePerson { public int TmdbId { get; set; } public bool IsSeries { get; set; } public int PersonId { get; set; } public string Name { get; set; } = ""; public string Department { get; set; } = ""; public string? Character { get; set; } public int SortOrder { get; set; } public Movie Movie { get; set; } = null!; }
-public sealed class RecommendationImpression { public Guid Id { get; set; } = Guid.NewGuid(); public Guid? UserId { get; set; } public int TmdbId { get; set; } public bool IsSeries { get; set; } public string ThemeId { get; set; } = ""; public int Position { get; set; } public string Reason { get; set; } = ""; public string FeedItemType { get; set; } = "movie"; public string RankerVersion { get; set; } = RecommendationRanking.RankerVersion; public int ProfileVersion { get; set; } public string? SessionId { get; set; } public DateTime ShownAt { get; set; } = DateTime.UtcNow; }
+public sealed class RecommendationImpression { public Guid Id { get; set; } = Guid.NewGuid(); public Guid? UserId { get; set; } public int TmdbId { get; set; } public bool IsSeries { get; set; } public string ThemeId { get; set; } = ""; public int Position { get; set; } public string Reason { get; set; } = ""; public string FeedItemType { get; set; } = "movie"; public string RankerVersion { get; set; } = RecommendationGateway.RankerVersion; public int ProfileVersion { get; set; } public string? SessionId { get; set; } public DateTime ShownAt { get; set; } = DateTime.UtcNow; }
+
+public sealed class MovieThemeMembership
+{
+    public int TmdbId { get; set; }
+    public bool IsSeries { get; set; }
+    public string ThemeSlug { get; set; } = "";
+    public double Confidence { get; set; }
+    public int ThemeVersion { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public Movie Movie { get; set; } = null!;
+}
 
 public sealed class MovieRecommendationFeature
 {
@@ -88,7 +100,7 @@ public sealed class CatalogSyncState { public string Source { get; set; } = ""; 
 
 public sealed class SwapKinoDbContext(DbContextOptions<SwapKinoDbContext> options) : IdentityDbContext<User, IdentityRole<Guid>, Guid>(options)
 {
-    public DbSet<Movie> Movies => Set<Movie>(); public DbSet<Genre> Genres => Set<Genre>(); public DbSet<MovieGenre> MovieGenres => Set<MovieGenre>(); public DbSet<Keyword> Keywords => Set<Keyword>(); public DbSet<MovieKeyword> MovieKeywords => Set<MovieKeyword>(); public DbSet<MoviePerson> MoviePeople => Set<MoviePerson>(); public DbSet<UserAction> UserActions => Set<UserAction>(); public DbSet<UserMovieState> UserMovieStates => Set<UserMovieState>(); public DbSet<UserExternalItem> UserExternalItems => Set<UserExternalItem>(); public DbSet<RecommendationImpression> RecommendationImpressions => Set<RecommendationImpression>(); public DbSet<MovieRecommendationFeature> MovieRecommendationFeatures => Set<MovieRecommendationFeature>(); public DbSet<UserTasteProfile> UserTasteProfiles => Set<UserTasteProfile>(); public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>(); public DbSet<ImportJob> ImportJobs => Set<ImportJob>(); public DbSet<ImportItem> ImportItems => Set<ImportItem>(); public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>(); public DbSet<CatalogSyncState> CatalogSyncStates => Set<CatalogSyncState>();
+    public DbSet<Movie> Movies => Set<Movie>(); public DbSet<Genre> Genres => Set<Genre>(); public DbSet<MovieGenre> MovieGenres => Set<MovieGenre>(); public DbSet<Keyword> Keywords => Set<Keyword>(); public DbSet<MovieKeyword> MovieKeywords => Set<MovieKeyword>(); public DbSet<MoviePerson> MoviePeople => Set<MoviePerson>(); public DbSet<UserAction> UserActions => Set<UserAction>(); public DbSet<UserMovieState> UserMovieStates => Set<UserMovieState>(); public DbSet<UserExternalItem> UserExternalItems => Set<UserExternalItem>(); public DbSet<RecommendationImpression> RecommendationImpressions => Set<RecommendationImpression>(); public DbSet<MovieThemeMembership> MovieThemeMemberships => Set<MovieThemeMembership>(); public DbSet<MovieRecommendationFeature> MovieRecommendationFeatures => Set<MovieRecommendationFeature>(); public DbSet<UserTasteProfile> UserTasteProfiles => Set<UserTasteProfile>(); public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>(); public DbSet<ImportJob> ImportJobs => Set<ImportJob>(); public DbSet<ImportItem> ImportItems => Set<ImportItem>(); public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>(); public DbSet<CatalogSyncState> CatalogSyncStates => Set<CatalogSyncState>();
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -111,6 +123,8 @@ public sealed class SwapKinoDbContext(DbContextOptions<SwapKinoDbContext> option
         b.Entity<UserMovieState>().HasKey(x => new { x.UserId, x.TmdbId, x.IsSeries });
         b.Entity<UserExternalItem>().HasKey(x => new { x.UserId, x.Source, x.ProfileId, x.ExternalId });
         b.Entity<RecommendationImpression>().HasIndex(x => new { x.UserId, x.TmdbId, x.IsSeries, x.ShownAt });
+        b.Entity<MovieThemeMembership>().HasKey(x => new { x.TmdbId, x.IsSeries, x.ThemeSlug });
+        b.Entity<MovieThemeMembership>().HasOne(x => x.Movie).WithMany().HasForeignKey(x => new { x.TmdbId, x.IsSeries }).OnDelete(DeleteBehavior.Cascade);
         b.Entity<MovieRecommendationFeature>().HasKey(x => new { x.TmdbId, x.IsSeries });
         b.Entity<MovieRecommendationFeature>().HasOne<Movie>().WithMany().HasForeignKey(x => new { x.TmdbId, x.IsSeries }).OnDelete(DeleteBehavior.Cascade);
         b.Entity<UserTasteProfile>().HasKey(x => x.UserId);

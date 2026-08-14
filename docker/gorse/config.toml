@@ -1,0 +1,27 @@
+[master]
+http_port = 8088
+
+[server]
+api_key = "change-gorse-api-key"
+default_n = 100
+auto_insert_user = true
+auto_insert_item = true
+
+[recommend]
+cache_size = 100
+cache_expire = "72h"
+
+[recommend.data_source]
+positive_feedback_types = ["positive", "strong_positive"]
+read_feedback_types = ["read"]
+negative_feedback_types = ["negative"]
+
+[recommend.collaborative]
+type = "mf"
+
+[recommend.ranker]
+type = "fm"
+recommenders = ["latest", "collaborative", "item-to-item/neighbors", "user-to-user/neighbors"]
+
+[recommend.fallback]
+recommenders = ["latest"]

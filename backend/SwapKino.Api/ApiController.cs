@@ -15,7 +15,7 @@ using StackExchange.Redis;
 namespace SwapKino.Api;
 [ApiController]
 [Route("api/v1")]
-public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IConnectionMultiplexer redis, IHttpClientFactory http, TmdbClient tmdb, VibixClient vibix, AvatarStorage avatars, ILogger<ApiController> log) : ControllerBase
+public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IConnectionMultiplexer redis, IHttpClientFactory http, TmdbClient tmdb, VibixClient vibix, AvatarStorage avatars, RecommendationGateway gateway, ILogger<ApiController> log) : ControllerBase
 {
     private static readonly JsonSerializerOptions CacheJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly int[] PsychologicalGenreIds = [18, 53, 9648, 27, 80];
@@ -37,7 +37,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
     [HttpPost("auth/register")][EnableRateLimiting("auth")]
     [ProducesResponseType(StatusCodes.Status201Created)]
-    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct) { if (!request.PrivacyConsent) return BadRequest(new { message = "Необходимо согласие на обработку персональных данных" }); if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName,PrivacyConsentAt=DateTime.UtcNow,PrivacyConsentVersion="2026-08-10"}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(new { message = string.Join(" ", result.Errors.Select(error => error.Description)), errors = result.Errors }); db.UserTasteProfiles.Add(new UserTasteProfile { UserId = u.Id }); await db.SaveChangesAsync(ct); return await AuthResponse(u, ct, StatusCodes.Status201Created); }
+    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct) { if (!request.PrivacyConsent) return BadRequest(new { message = "Необходимо согласие на обработку персональных данных" }); if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName,PrivacyConsentAt=DateTime.UtcNow,PrivacyConsentVersion="2026-08-10"}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(new { message = string.Join(" ", result.Errors.Select(error => error.Description)), errors = result.Errors }); await db.SaveChangesAsync(ct); return await AuthResponse(u, ct, StatusCodes.Status201Created); }
     [HttpPost("auth/login")][EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct)
     {
@@ -325,8 +325,13 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     public async Task<IActionResult> Recommendations([FromQuery]int page=1, CancellationToken ct=default)
     {
         if(page is <1 or >500)return ValidationProblem("Страница должна быть от 1 до 500");
-        var ranked=await RankMovies(UserId,null,(page-1)*20,20,ct);
-        return Ok(new{page,results=ranked.Select(MovieDto.Summary)});
+        var keys = (await gateway.GetRecommendationsAsync(UserId, "", Math.Min(100, page * 20), ct)).Skip((page - 1) * 20).Take(20).ToArray();
+        if (keys.Length < 20)
+            keys = await db.Movies.AsNoTracking().Where(x => !x.Adult && (x.PosterPath != null || x.BackdropPath != null)).OrderByDescending(x => x.Popularity).ThenByDescending(x => x.VoteCount).Skip((page - 1) * 20).Take(20).Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToArrayAsync(ct);
+        var ids = keys.Select(x => x.TmdbId).ToArray();
+        var movies = await LightweightMovies(db.Movies.AsNoTracking().Where(x => ids.Contains(x.TmdbId))).ToListAsync(ct);
+        var results = keys.Select(key => movies.FirstOrDefault(x => x.TmdbId == key.TmdbId && x.IsSeries == key.IsSeries)).Where(x => x is not null).Select(x => MovieDto.Summary(x!));
+        return Ok(new{page,results});
     }
     [HttpPost("actions")]
     [Authorize]
@@ -349,7 +354,9 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var state=await db.UserMovieStates.FindAsync([UserId,request.TmdbId,request.IsSeries],ct)??new UserMovieState{UserId=UserId,TmdbId=request.TmdbId,IsSeries=request.IsSeries};
         switch(request.ActionType){case "favorite":state.Favorite=true;break;case "unfavorite":state.Favorite=false;break;case "watched":case "already_watched":state.Watched=true;break;case "unwatched":state.Watched=false;break;case "rate":case "rating":case "rate_inline":state.Rating=request.Value;state.Watched=true;break;case "unrate":state.Rating=null;break;case "skip":case "swipe_left":break;case "swipe_right":break;case "not_interested":case "not_for_me":case "less_like_this":state.SuppressedUntil=DateTime.UtcNow.AddDays(7);break;case "impression":state.LastImpressionAt=DateTime.UtcNow;break;}
         state.UpdatedAt=DateTime.UtcNow;if(db.Entry(state).State==EntityState.Detached)db.UserMovieStates.Add(state);
-        db.OutboxEvents.Add(new OutboxEvent { Topic = "recommendations.action", Payload = JsonSerializer.Serialize(new { userId = UserId, tmdbId = request.TmdbId, action = request.ActionType, sessionId = request.SessionId }) });
+        if (request.ActionType == "impression")
+            db.RecommendationImpressions.Add(new RecommendationImpression { UserId = UserId, TmdbId = request.TmdbId, IsSeries = request.IsSeries, ThemeId = request.ThemeId ?? "unknown", Position = request.Position ?? 0, Reason = "rendered", SessionId = request.SessionId });
+        db.OutboxEvents.Add(new OutboxEvent { Topic = "recommendations.action", Payload = JsonSerializer.Serialize(new { userId = UserId, tmdbId = request.TmdbId, isSeries = request.IsSeries, action = request.ActionType, value = request.Value, sessionId = request.SessionId, createdAt = item.CreatedAt }) });
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException)
         {
@@ -440,7 +447,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             // Keep the first request bounded. The deck loads 20 cards and asks
             // for the next page with the cursor; ranking hundreds of graph-heavy
             // candidates before returning the first card caused 40-90s timeouts.
-            var ranked=await RankMovies(uid,reel,0,60,ct);keys=ranked.Select(x=>new MovieKey(x.TmdbId,x.IsSeries)).ToList();
+            keys=await BuildRecommendationDeck(uid, reel, ct);
             await cache.SetStringAsync(cacheKey,JsonSerializer.Serialize(keys),new DistributedCacheEntryOptions{AbsoluteExpirationRelativeToNow=TimeSpan.FromMinutes(30)},ct);
         }
         else keys=JsonSerializer.Deserialize<List<MovieKey>>(cached)??[];
@@ -451,12 +458,6 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var loaded=await LightweightMovies(db.Movies.AsNoTracking().Where(x=>selectedIds.Contains(x.TmdbId))).ToListAsync(ct);
         var items=selected.Select(k=>loaded.FirstOrDefault(x=>x.TmdbId==k.TmdbId&&x.IsSeries==k.IsSeries)).Where(x=>x is not null).Select(x=>MovieDto.Summary(x!)).ToArray();
         var feedItems=items.Select(movie=>new { kind="movie", movie }).ToArray();
-        if (Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var impressionUser))
-        {
-            var profileVersion=await db.UserTasteProfiles.AsNoTracking().Where(x=>x.UserId==impressionUser).Select(x=>(int?)x.ProfileVersion).FirstOrDefaultAsync(ct)??0;
-            db.RecommendationImpressions.AddRange(selected.Select((key, index) => new RecommendationImpression { UserId = impressionUser, TmdbId = key.TmdbId, IsSeries = key.IsSeries, ThemeId = reel.Slug, Position = offset + index, Reason = "hybrid-ranking", RankerVersion=RecommendationRanking.RankerVersion, ProfileVersion=profileVersion, SessionId=sessionId }));
-            await db.SaveChangesAsync(ct);
-        }
         var representative=representativeKey is null?null:loaded.FirstOrDefault(x=>x.TmdbId==representativeKey.TmdbId&&x.IsSeries==representativeKey.IsSeries);
         var genreIds=reel.Genres.Distinct().ToArray();var genres=await db.Genres.AsNoTracking().Where(x=>genreIds.Contains(x.TmdbId)).ToDictionaryAsync(x=>x.TmdbId,ct);
         var next=offset+selected.Length<keys.Count?MakeFeedCursor(sessionId,offset+selected.Length):null;
@@ -578,6 +579,37 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             };
         }
         catch (JsonException) { return null; }
+    }
+    private async Task<List<MovieKey>> BuildRecommendationDeck(Guid? userId, ReelDefinition reel, CancellationToken ct)
+    {
+        var requested = userId is Guid uid
+            ? await gateway.GetRecommendationsAsync(uid, reel.Slug, 120, ct)
+            : await gateway.GetThemePopularAsync(reel.Slug, 120, ct);
+        var states = userId is Guid authenticated
+            ? await db.UserMovieStates.AsNoTracking().Where(x => x.UserId == authenticated && (x.Watched || x.Rating != null || x.SuppressedUntil > DateTime.UtcNow)).Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct)
+            : [];
+        var excluded = states.ToHashSet();
+        var keys = requested.Where(x => !excluded.Contains(x)).Distinct().ToList();
+        if (keys.Count < 20)
+        {
+            var local = await db.MovieThemeMemberships.AsNoTracking()
+                .Where(x => x.ThemeSlug == ThemeRegistry.CanonicalSlug(reel.Slug) && x.ThemeVersion == ThemeRegistry.Version)
+                .OrderByDescending(x => x.Confidence)
+                .Join(db.Movies.AsNoTracking(), membership => new { membership.TmdbId, membership.IsSeries }, movie => new { movie.TmdbId, movie.IsSeries }, (_, movie) => movie)
+                .Where(x => !x.Adult && (x.PosterPath != null || x.BackdropPath != null))
+                .OrderByDescending(x => x.Popularity).ThenByDescending(x => x.VoteCount).Take(120)
+                .Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct);
+            keys.AddRange(local.Where(x => !excluded.Contains(x) && !keys.Contains(x)));
+        }
+        if (keys.Count < 20 && reel.Genres.Length > 0)
+        {
+            var legacy = await db.Movies.AsNoTracking()
+                .Where(x => !x.Adult && (reel.IsSeries == null || x.IsSeries == reel.IsSeries) && x.MovieGenres.Any(g => reel.Genres.Contains(g.GenreId)) && (x.PosterPath != null || x.BackdropPath != null))
+                .OrderByDescending(x => x.Popularity).ThenByDescending(x => x.VoteCount).Take(120)
+                .Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct);
+            keys.AddRange(legacy.Where(x => !excluded.Contains(x) && !keys.Contains(x)));
+        }
+        return keys;
     }
     private async Task<List<Movie>> RankMovies(Guid? userId, ReelDefinition? reel, int skip, int take, CancellationToken ct)
     {
@@ -790,7 +822,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         return Array.Empty<string>();
     }
 }
-public sealed record RegisterRequest(string Email,string Password,string? DisplayName,bool PrivacyConsent); public sealed record LoginRequest(string Email,string Password); public sealed record ProfileUpdateRequest(string? DisplayName, string? AvatarUrl); public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey,bool IsSeries=false,string? SessionId=null); public sealed record ImportRequest(string ProfileUrl);
+public sealed record RegisterRequest(string Email,string Password,string? DisplayName,bool PrivacyConsent); public sealed record LoginRequest(string Email,string Password); public sealed record ProfileUpdateRequest(string? DisplayName, string? AvatarUrl); public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey,bool IsSeries=false,string? SessionId=null,string? ThemeId=null,int? Position=null); public sealed record ImportRequest(string ProfileUrl);
 public sealed record LibraryQuery(string? Cursor = null, int Limit = 20, int Page = 1, string? Q = null, string? GenreIds = null, double? MinRating = null, int? YearFrom = null, int? YearTo = null, bool? IsSeries = null, string? Sort = "recent");
 public sealed record MovieKey(int TmdbId,bool IsSeries);
 public sealed record CatalogCursor(double Number,int Votes,string? Text,int Id,bool IsSeries);

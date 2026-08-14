@@ -51,6 +51,12 @@ builder.Services.AddRateLimiter(options =>
 });
 var redisUrl = config["REDIS_URL"] ?? "redis-runtime:6379,abortConnect=false";
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisUrl));
+builder.Services.AddHttpClient("gorse", client =>
+{
+    client.BaseAddress = new Uri((config["GORSE_URL"] ?? "http://gorse-server:8087/").TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
+builder.Services.AddScoped<RecommendationGateway>();
 builder.Services.AddSignalR().AddStackExchangeRedis(redisUrl);
 builder.Services.AddStackExchangeRedisCache(options => options.Configuration = config["REDIS_CACHE_URL"] ?? "redis-cache:6379,abortConnect=false"); builder.Services.AddHttpClient("tmdb", c => c.BaseAddress = new Uri((config["TMDB_BASE_URL"] ?? "https://api.themoviedb.org/3").TrimEnd('/') + "/")); builder.Services.AddHttpClient("selenium", c => c.BaseAddress = new Uri(config["SELENIUM_URL"] ?? "http://selenium-service:8081")); builder.Services.AddHttpClient<VibixClient>(c => c.BaseAddress = new Uri(config["VIBIX_BASE_URL"] ?? "https://vibix.org/")).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 var minioEndpoint = config["MINIO_ENDPOINT"] ?? "minio:9000";
@@ -62,14 +68,15 @@ var app = builder.Build();
 await using (var scope = app.Services.CreateAsyncScope()) { var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>(); await db.Database.MigrateAsync(); }
 app.UseSwagger(); app.UseSwaggerUI(); app.UseCors(); app.UseRateLimiter(); app.UseAuthentication(); app.UseAuthorization(); app.MapControllers(); app.MapHub<EventsHub>("/hubs/events");
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "api" }));
-app.MapGet("/ready", async (SwapKinoDbContext db, IConnectionMultiplexer redis, CancellationToken ct) =>
+app.MapGet("/ready", async (SwapKinoDbContext db, IConnectionMultiplexer redis, RecommendationGateway recommendations, CancellationToken ct) =>
 {
     try
     {
         if (!await db.Database.CanConnectAsync(ct)) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         await redis.GetDatabase().PingAsync();
         if (redis.GetDatabase().StringGet("swapkino:worker:heartbeat").IsNullOrEmpty) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
-        return Results.Ok(new { status = "ready", database = "ok", redis = "ok", worker = "ok" });
+        if (!await recommendations.IsHealthyAsync(ct)) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        return Results.Ok(new { status = "ready", database = "ok", redis = "ok", worker = "ok", gorse = "ok" });
     }
     catch { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
 });

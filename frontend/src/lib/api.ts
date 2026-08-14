@@ -313,6 +313,8 @@ export const api = {
     value?: number;
     idempotencyKey: string;
     sessionId?: string;
+    themeId?: string;
+    position?: number;
   }) => request<{ id: string; duplicate: boolean }>("/actions", { method: "POST", body: JSON.stringify(payload) }),
   importProfile: (profileUrl: string) =>
     request<{ id: string; status: string; progress: number }>("/imports", {

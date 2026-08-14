@@ -26,6 +26,41 @@ services:
     mem_limit: 192m
     cpus: 0.25
 
+  redis-gorse:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes: ["redis-gorse-data:/data"]
+
+  postgres-gorse:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gorse
+      POSTGRES_USER: gorse
+      POSTGRES_PASSWORD: gorse
+    volumes: ["postgres-gorse-data:/var/lib/postgresql/data"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U gorse -d gorse"], interval: 5s, timeout: 5s, retries: 10}
+
+  gorse-master:
+    image: zhenghaoz/gorse-master:latest
+    command: ["-c", "/etc/gorse/config.toml", "--log-path", "/var/log/gorse/master.log", "--cache-path", "/var/lib/gorse/master_cache.data"]
+    environment:
+      GORSE_DATA_STORE: postgres://gorse:gorse@postgres-gorse/gorse?sslmode=disable
+      GORSE_CACHE_STORE: redis://redis-gorse:6379/0
+    volumes: ["./gorse/config.toml:/etc/gorse/config.toml:ro", "gorse-master-data:/var/lib/gorse", "gorse-logs:/var/log/gorse"]
+    depends_on: {postgres-gorse: {condition: service_healthy}, redis-gorse: {condition: service_started}}
+
+  gorse-server:
+    image: zhenghaoz/gorse-server:latest
+    command: ["--master-host", "gorse-master", "--master-port", "8086", "--http-host", "0.0.0.0", "--http-port", "8087", "--log-path", "/var/log/gorse/server.log", "--cache-path", "/var/lib/gorse/server_cache.data"]
+    volumes: ["gorse-server-data:/var/lib/gorse", "gorse-logs:/var/log/gorse"]
+    depends_on: {gorse-master: {condition: service_started}}
+
+  gorse-worker:
+    image: zhenghaoz/gorse-worker:latest
+    command: ["--master-host", "gorse-master", "--master-port", "8086", "--http-host", "0.0.0.0", "--http-port", "8089", "--log-path", "/var/log/gorse/worker.log", "--cache-path", "/var/lib/gorse/worker_cache.data"]
+    volumes: ["gorse-worker-data:/var/lib/gorse", "gorse-logs:/var/log/gorse"]
+    depends_on: {gorse-master: {condition: service_started}}
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -46,6 +81,8 @@ services:
       DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
       REDIS_URL: redis-runtime:6379,abortConnect=false
       REDIS_CACHE_URL: redis-cache:6379,abortConnect=false
+      GORSE_URL: http://gorse-server:8087/
+      GORSE_API_KEY: change-gorse-api-key
       SELENIUM_URL: http://selenium-service:8081
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minio
@@ -59,7 +96,7 @@ services:
       TMDB_ALLOW_FALLBACK: "false"
       VIBIX_TMDB_PATH_TEMPLATE: ${VIBIX_TMDB_PATH_TEMPLATE:-api/v1/publisher/videos/tmdb/{0}}
     expose: ["8000"]
-    depends_on: {postgres: {condition: service_healthy}, redis-runtime: {condition: service_started}}
+    depends_on: {postgres: {condition: service_healthy}, redis-runtime: {condition: service_started}, gorse-server: {condition: service_started}}
     mem_limit: 512m
     cpus: 1.0
 
@@ -71,10 +108,12 @@ services:
       SERVICE: worker
       DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
       REDIS_URL: redis-runtime:6379,abortConnect=false
+      GORSE_URL: http://gorse-server:8087/
+      GORSE_API_KEY: change-gorse-api-key
       SELENIUM_URL: http://selenium-service:8081
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-before-production}
     env_file: [../backend/.env]
-    depends_on: {postgres: {condition: service_healthy}, api: {condition: service_started}, selenium-service: {condition: service_started}}
+    depends_on: {postgres: {condition: service_healthy}, api: {condition: service_started}, selenium-service: {condition: service_started}, gorse-worker: {condition: service_started}}
     mem_limit: 384m
     cpus: 0.5
 
@@ -120,3 +159,9 @@ volumes:
     name: swapkino_postgres-data
   redis-runtime-data: {}
   minio-data: {}
+  redis-gorse-data: {}
+  postgres-gorse-data: {}
+  gorse-master-data: {}
+  gorse-server-data: {}
+  gorse-worker-data: {}
+  gorse-logs: {}

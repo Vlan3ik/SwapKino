@@ -14,7 +14,7 @@ public static class RecommendationMetrics
     {
         var target = relevant.ToHashSet();
         if (target.Count == 0) return 0;
-        return recommended.Take(k).Count(target.Contains) / (double)target.Count;
+        return recommended.Take(k).ToHashSet().Count(target.Contains) / (double)target.Count;
     }
 
     public static double IntraListDiversity(IReadOnlyList<IReadOnlySet<int>> features)

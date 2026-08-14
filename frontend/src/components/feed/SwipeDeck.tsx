@@ -28,6 +28,11 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
   const isFavorite = useAppStore((state) => state.isFavorite);
 
   useEffect(() => {
+    if (!current || !getToken()) return;
+    void api.action({ tmdbId: current.id, isSeries: current.type === "series", actionType: "impression", sessionId, themeId: reelId, position: index, idempotencyKey: `impression:${sessionId}:${current.type}:${current.id}` }).catch(() => undefined);
+  }, [current, index, reelId, sessionId]);
+
+  useEffect(() => {
     let active = true; setLoading(true);
     api.reelFeed(reelId).then(async (response) => { if (!active) return; const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? []; const mapped = raw.map(mapApiMovie); await preloadMovies(mapped); if (!active) return; setReel(mapApiReel(response.reel)); setFeedItems(movieFeedItems(mapped)); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active) setFeedItems([]); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };

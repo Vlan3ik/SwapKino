@@ -38,4 +38,20 @@ public sealed class RecommendationMetricsTests
         Assert.Null(shortReel.PrimaryGenreId);
         Assert.All(ReelDefinitions.All.Where(x => x.Strategy == "genres" && x.Genres.Length > 0), reel => Assert.Equal(reel.Genres[0], reel.PrimaryGenreId));
     }
+
+    [Fact]
+    public void Theme_classifier_requires_the_declared_genre_and_keyword()
+    {
+        var movie = new Movie { TmdbId = 1, MovieGenres = [new MovieGenre { GenreId = 27 }], MovieKeywords = [new MovieKeyword { KeywordId = 12377 }] };
+        var themes = ThemeRegistry.Classify(movie).Select(x => x.Slug).ToHashSet();
+        Assert.Contains("horror", themes);
+        Assert.DoesNotContain("sport", themes);
+    }
+
+    [Fact]
+    public void Theme_aliases_keep_existing_reel_urls_compatible()
+    {
+        Assert.Equal("psychological", ThemeRegistry.CanonicalSlug("na-odnom-dyhanii"));
+        Assert.Equal("anime", ThemeRegistry.CanonicalSlug("anime-vecher"));
+    }
 }
