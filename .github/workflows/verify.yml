@@ -14,7 +14,7 @@ jobs:
         with:
           dotnet-version: 8.x
       - run: dotnet build backend/SwapKino.sln
-      - run: dotnet test backend/SwapKino.sln --no-build --filter FullyQualifiedName~RecommendationMetricsTests
+      - run: dotnet test backend/SwapKino.sln --no-build
       - run: docker compose -f docker/compose.yml up -d postgres-gorse redis-gorse gorse-master gorse-server gorse-worker
       - run: |
           for i in {1..30}; do

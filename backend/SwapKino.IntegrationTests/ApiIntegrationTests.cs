@@ -95,7 +95,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         await using(var scope=factory.Services.CreateAsyncScope())
         {
             var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
-            var genreIds = new[] { 18, 27, 35, 53, 80 };
+            var genreIds = new[] { 18, 27, 35, 53, 80, 9648 };
             var genreRows = new Dictionary<int, Genre>();
             foreach (var genreId in genreIds)
             {
@@ -116,7 +116,8 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
             }
             var psychological = new Movie { TmdbId = 5200, Title = "Psychological candidate", BackdropPath = "/psychological.jpg", DetailsState = "ready", VoteAverage = 8, VoteCount = 100 };
             db.Movies.Add(psychological);
-            db.MovieGenres.Add(new MovieGenre { TmdbId = 5200, GenreId = 18, Movie = psychological });
+            foreach (var genreId in new[] { 53, 80, 9648 })
+                db.MovieGenres.Add(new MovieGenre { TmdbId = 5200, GenreId = genreId, Movie = psychological, Genre = genreRows[genreId] });
             var psychologicalKeyword = await db.Keywords.SingleOrDefaultAsync(x => x.TmdbId == 362567) ?? new Keyword { TmdbId = 362567, Slug = "psychological", Name = "Psychological" };
             if (psychologicalKeyword.TmdbId == 362567 && !await db.Keywords.AnyAsync(x => x.TmdbId == 362567)) db.Keywords.Add(psychologicalKeyword);
             db.MovieKeywords.Add(new MovieKeyword { TmdbId = 5200, KeywordId = 362567, Movie = psychological, Keyword = psychologicalKeyword });
