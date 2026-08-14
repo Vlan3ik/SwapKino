@@ -32,6 +32,7 @@ public sealed class Movie
     public DateTime SummaryUpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DetailsUpdatedAt { get; set; }
     public DateTime? RecommendationSyncedAt { get; set; }
+    public int? RecommendationThemeVersion { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<MovieGenre> MovieGenres { get; set; } = [];
     public ICollection<MovieKeyword> MovieKeywords { get; set; } = [];

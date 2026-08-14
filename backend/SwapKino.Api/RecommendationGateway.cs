@@ -45,7 +45,8 @@ public sealed class RecommendationGateway(IHttpClientFactory factory, IConfigura
             language = movie.OriginalLanguage,
             year = int.TryParse(movie.ReleaseDate?.Take(4).ToString(), out var year) ? year : (int?)null
         };
-        var item = new { ItemId = ItemId(movie.TmdbId, movie.IsSeries), IsHidden = movie.Adult || memberships.Count == 0, Categories = categories, Labels = labels, Comment = movie.Overview ?? movie.Title, Timestamp = movie.UpdatedAt };
+        var releaseDate = DateTime.TryParse(movie.ReleaseDate, out var released) ? released : movie.UpdatedAt;
+        var item = new { ItemId = ItemId(movie.TmdbId, movie.IsSeries), IsHidden = movie.Adult, Categories = categories, Labels = labels, Comment = movie.Overview ?? movie.Title, Timestamp = releaseDate };
         using var response = await SendAsync(HttpMethod.Post, "api/items", JsonContent.Create(new[] { item }), ct);
         response.EnsureSuccessStatusCode();
     }
@@ -56,6 +57,12 @@ public sealed class RecommendationGateway(IHttpClientFactory factory, IConfigura
         if (rows.Length == 0) return;
         using var response = await SendAsync(HttpMethod.Put, "api/feedback", JsonContent.Create(rows), ct);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task DeleteUserAsync(Guid userId, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Delete, $"api/user/{Uri.EscapeDataString(userId.ToString())}", null, ct);
+        if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound)) response.EnsureSuccessStatusCode();
     }
 
     public async Task<bool> IsHealthyAsync(CancellationToken ct)

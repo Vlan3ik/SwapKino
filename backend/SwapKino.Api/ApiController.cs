@@ -147,6 +147,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         db.UserExternalItems.RemoveRange(db.UserExternalItems.Where(x => x.UserId == UserId));
         db.ImportJobs.RemoveRange(db.ImportJobs.Where(x => x.UserId == UserId));
         db.RefreshSessions.RemoveRange(db.RefreshSessions.Where(x => x.UserId == UserId));
+        db.OutboxEvents.Add(new OutboxEvent { Topic = "recommendations.user.deleted", Payload = JsonSerializer.Serialize(new { userId = UserId }) });
         var result = await users.DeleteAsync(user);
         if (!result.Succeeded) return Problem("Не удалось удалить аккаунт");
         await db.SaveChangesAsync(ct);
@@ -325,7 +326,10 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     public async Task<IActionResult> Recommendations([FromQuery]int page=1, CancellationToken ct=default)
     {
         if(page is <1 or >500)return ValidationProblem("Страница должна быть от 1 до 500");
-        var keys = (await gateway.GetRecommendationsAsync(UserId, "", Math.Min(100, page * 20), ct)).Skip((page - 1) * 20).Take(20).ToArray();
+        IReadOnlyList<MovieKey> personalized = [];
+        try { personalized = await gateway.GetRecommendationsAsync(UserId, "", Math.Min(100, page * 20), ct); }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested) { }
+        var keys = personalized.Skip((page - 1) * 20).Take(20).ToArray();
         if (keys.Length < 20)
             keys = await db.Movies.AsNoTracking().Where(x => !x.Adult && (x.PosterPath != null || x.BackdropPath != null)).OrderByDescending(x => x.Popularity).ThenByDescending(x => x.VoteCount).Skip((page - 1) * 20).Take(20).Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToArrayAsync(ct);
         var ids = keys.Select(x => x.TmdbId).ToArray();
@@ -447,7 +451,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             // Keep the first request bounded. The deck loads 20 cards and asks
             // for the next page with the cursor; ranking hundreds of graph-heavy
             // candidates before returning the first card caused 40-90s timeouts.
-            keys=await BuildRecommendationDeck(uid, reel, ct);
+            keys=await BuildRecommendationDeck(uid, reel, sessionId, ct);
             await cache.SetStringAsync(cacheKey,JsonSerializer.Serialize(keys),new DistributedCacheEntryOptions{AbsoluteExpirationRelativeToNow=TimeSpan.FromMinutes(30)},ct);
         }
         else keys=JsonSerializer.Deserialize<List<MovieKey>>(cached)??[];
@@ -580,20 +584,42 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         }
         catch (JsonException) { return null; }
     }
-    private async Task<List<MovieKey>> BuildRecommendationDeck(Guid? userId, ReelDefinition reel, CancellationToken ct)
+    private async Task<List<MovieKey>> BuildRecommendationDeck(Guid? userId, ReelDefinition reel, string sessionId, CancellationToken ct)
     {
-        var requested = userId is Guid uid
-            ? await gateway.GetRecommendationsAsync(uid, reel.Slug, 120, ct)
-            : await gateway.GetThemePopularAsync(reel.Slug, 120, ct);
+        var canonicalTheme = ThemeRegistry.CanonicalSlug(reel.Slug);
+        var isRecommendationTheme = ThemeRegistry.Find(canonicalTheme) is not null;
+        IReadOnlyList<MovieKey> requested = [];
+        if (isRecommendationTheme)
+        {
+            try
+            {
+                requested = userId is Guid uid
+                    ? await gateway.GetRecommendationsAsync(uid, canonicalTheme, 120, ct)
+                    : await gateway.GetThemePopularAsync(canonicalTheme, 120, ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                log.LogWarning(ex, "Gorse unavailable for reel {Reel}; using local fallback", reel.Slug);
+            }
+        }
         var states = userId is Guid authenticated
             ? await db.UserMovieStates.AsNoTracking().Where(x => x.UserId == authenticated && (x.Watched || x.Rating != null || x.SuppressedUntil > DateTime.UtcNow)).Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct)
             : [];
         var excluded = states.ToHashSet();
+        if (userId is Guid sessionUser && !string.IsNullOrWhiteSpace(sessionId))
+        {
+            var sessionNegative = await redis.GetDatabase().SetMembersAsync($"rec:session:{sessionUser}:{sessionId}:negative-items");
+            foreach (var value in sessionNegative)
+            {
+                var parts = value.ToString().Split(':');
+                if (parts.Length == 3 && int.TryParse(parts[2], out var id)) excluded.Add(new MovieKey(id, parts[1] == "series"));
+            }
+        }
         var keys = requested.Where(x => !excluded.Contains(x)).Distinct().ToList();
-        if (keys.Count < 20)
+        if (keys.Count < 20 && isRecommendationTheme)
         {
             var local = await db.MovieThemeMemberships.AsNoTracking()
-                .Where(x => x.ThemeSlug == ThemeRegistry.CanonicalSlug(reel.Slug) && x.ThemeVersion == ThemeRegistry.Version)
+                .Where(x => x.ThemeSlug == canonicalTheme && x.ThemeVersion == ThemeRegistry.Version)
                 .OrderByDescending(x => x.Confidence)
                 .Join(db.Movies.AsNoTracking(), membership => new { membership.TmdbId, membership.IsSeries }, movie => new { movie.TmdbId, movie.IsSeries }, (_, movie) => movie)
                 .Where(x => !x.Adult && (x.PosterPath != null || x.BackdropPath != null))
@@ -601,15 +627,33 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
                 .Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct);
             keys.AddRange(local.Where(x => !excluded.Contains(x) && !keys.Contains(x)));
         }
-        if (keys.Count < 20 && reel.Genres.Length > 0)
+        if (keys.Count < 20 && !isRecommendationTheme)
         {
             var legacy = await db.Movies.AsNoTracking()
-                .Where(x => !x.Adult && (reel.IsSeries == null || x.IsSeries == reel.IsSeries) && x.MovieGenres.Any(g => reel.Genres.Contains(g.GenreId)) && (x.PosterPath != null || x.BackdropPath != null))
+                .Where(x => !x.Adult && (reel.IsSeries == null || x.IsSeries == reel.IsSeries) && (x.PosterPath != null || x.BackdropPath != null))
                 .OrderByDescending(x => x.Popularity).ThenByDescending(x => x.VoteCount).Take(120)
                 .Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct);
             keys.AddRange(legacy.Where(x => !excluded.Contains(x) && !keys.Contains(x)));
         }
-        return keys;
+        return await ApplyHardGuards(keys, reel, ct);
+    }
+
+    private async Task<List<MovieKey>> ApplyHardGuards(IEnumerable<MovieKey> candidates, ReelDefinition reel, CancellationToken ct)
+    {
+        var ids = candidates.Select(x => x.TmdbId).Distinct().ToArray();
+        if (ids.Length == 0) return [];
+        var query = db.Movies.AsNoTracking().Where(x => ids.Contains(x.TmdbId) && !x.Adult && (x.PosterPath != null || x.BackdropPath != null));
+        if (reel.IsSeries is bool isSeries) query = query.Where(x => x.IsSeries == isSeries);
+        if (reel.Genres.Length > 0) query = query.Where(x => x.MovieGenres.Any(g => reel.Genres.Contains(g.GenreId)));
+        if (reel.KeywordIds is { Length: > 0 }) query = query.Where(x => x.MovieKeywords.Any(k => reel.KeywordIds.Contains(k.KeywordId)));
+        if (reel.ExcludedGenres is { Length: > 0 }) query = query.Where(x => !x.MovieGenres.Any(g => reel.ExcludedGenres.Contains(g.GenreId)));
+        if (reel.MaxRuntime is int maxRuntime) query = query.Where(x => x.RuntimeMinutes != null && x.RuntimeMinutes <= maxRuntime);
+        if (reel.YearBefore is int yearBefore) query = query.Where(x => x.ReleaseDate != null && string.Compare(x.ReleaseDate, $"{yearBefore}-12-31") <= 0);
+        if (reel.MinVoteAverage is double minVoteAverage) query = query.Where(x => x.VoteAverage >= minVoteAverage);
+        if (reel.MinVoteCount is int minVoteCount) query = query.Where(x => x.VoteCount >= minVoteCount);
+        if (reel.Strategy == "psychological") query = query.Where(x => x.MovieGenres.Any(g => ThemeRegistry.Find("psychological")!.RequiredGenres.Contains(g.GenreId)));
+        var allowed = (await query.Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct)).ToHashSet();
+        return candidates.Where(allowed.Contains).Distinct().ToList();
     }
     private async Task<List<Movie>> RankMovies(Guid? userId, ReelDefinition? reel, int skip, int take, CancellationToken ct)
     {

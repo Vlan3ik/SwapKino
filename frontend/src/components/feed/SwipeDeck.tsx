@@ -20,31 +20,32 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
   const [index, setIndex] = useState(0);
   const [swipeCount, setSwipeCount] = useState(0);
   const [probeMovie, setProbeMovie] = useState<Movie | null>(null);
-  const [sessionId] = useState(() => typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `session-${Date.now()}`);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [committing, setCommitting] = useState<"left" | "right" | null>(null);
   const [backdropMovie, setBackdropMovie] = useState<Movie | undefined>();
   const isFavorite = useAppStore((state) => state.isFavorite);
+  const current = movies[index];
 
   useEffect(() => {
     if (!current || !getToken()) return;
+    if (!sessionId) return;
     void api.action({ tmdbId: current.id, isSeries: current.type === "series", actionType: "impression", sessionId, themeId: reelId, position: index, idempotencyKey: `impression:${sessionId}:${current.type}:${current.id}` }).catch(() => undefined);
   }, [current, index, reelId, sessionId]);
 
   useEffect(() => {
     let active = true; setLoading(true);
-    api.reelFeed(reelId).then(async (response) => { if (!active) return; const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? []; const mapped = raw.map(mapApiMovie); await preloadMovies(mapped); if (!active) return; setReel(mapApiReel(response.reel)); setFeedItems(movieFeedItems(mapped)); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active) setFeedItems([]); }).finally(() => { if (active) setLoading(false); });
+    api.reelFeed(reelId).then(async (response) => { if (!active) return; const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? []; const mapped = raw.map(mapApiMovie); await preloadMovies(mapped); if (!active) return; setSessionId(response.feedSessionId ?? null); setReel(mapApiReel(response.reel)); setFeedItems(movieFeedItems(mapped)); setNextCursor(response.nextCursor ?? null); useAppStore.setState((state) => ({ movies: merge(state.movies, mapped) })); }).catch(() => { if (active) setFeedItems([]); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [reelId]);
 
-  const current = movies[index];
   const commit = useCallback((direction: "left" | "right") => {
     if (!current || committing) return;
     setCommitting(direction);
     const nextSwipeCount = swipeCount + 1;
     setSwipeCount(nextSwipeCount);
-    if (getToken()) void api.action({ tmdbId: current.id, isSeries: current.type === "series", actionType: direction === "right" ? "swipe_right" : "skip", sessionId, idempotencyKey: `swipe:${current.type}:${current.id}:${Date.now()}` }).catch(() => undefined);
+    if (getToken() && sessionId) void api.action({ tmdbId: current.id, isSeries: current.type === "series", actionType: direction === "right" ? "swipe_right" : "skip", sessionId, idempotencyKey: `swipe:${current.type}:${current.id}:${Date.now()}` }).catch(() => undefined);
     if (nextSwipeCount % 15 === 0) {
       setProbeMovie(current);
       setFeedItems((rows) => [...rows, { kind: "taste_probe", probeId: `${sessionId}:${nextSwipeCount}`, movieId: current.id, prompt: `Что думаешь о «${current.title}»?`, options: ["more_like_this", "less_like_this", "not_for_me", "already_watched", "rate_inline"] }]);
@@ -67,7 +68,7 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
 
   const submitProbe = useCallback((actionType: "more_like_this" | "less_like_this" | "not_for_me" | "already_watched" | "rate_inline", value?: number) => {
     if (!probeMovie) return;
-    if (getToken()) void api.action({ tmdbId: probeMovie.id, isSeries: probeMovie.type === "series", actionType, value, sessionId, idempotencyKey: `probe:${sessionId}:${probeMovie.type}:${probeMovie.id}:${actionType}:${value ?? ""}` }).catch(() => undefined);
+    if (getToken() && sessionId) void api.action({ tmdbId: probeMovie.id, isSeries: probeMovie.type === "series", actionType, value, sessionId, idempotencyKey: `probe:${sessionId}:${probeMovie.type}:${probeMovie.id}:${actionType}:${value ?? ""}` }).catch(() => undefined);
     if (actionType !== "already_watched") { setProbeMovie(null); setFeedItems((rows) => rows.filter((item) => item.kind !== "taste_probe" || item.movieId !== probeMovie.id)); void refreshTail(); }
   }, [probeMovie, refreshTail, sessionId]);
 

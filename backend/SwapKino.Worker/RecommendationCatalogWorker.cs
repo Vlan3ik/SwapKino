@@ -14,7 +14,8 @@ public sealed class RecommendationCatalogWorker(IServiceScopeFactory scopes, ILo
                 var gateway = scope.ServiceProvider.GetRequiredService<RecommendationGateway>();
                 var movies = await db.Movies.AsNoTracking()
                     .Include(x => x.MovieGenres).Include(x => x.MovieKeywords).Include(x => x.MoviePeople)
-                    .Where(x => x.DetailsState == "ready" && (x.PosterPath != null || x.BackdropPath != null) && (x.RecommendationSyncedAt == null || x.RecommendationSyncedAt < x.UpdatedAt))
+                    .Where(x => x.DetailsState == "ready" && (x.PosterPath != null || x.BackdropPath != null) &&
+                        (x.RecommendationSyncedAt == null || x.RecommendationSyncedAt < x.UpdatedAt || x.RecommendationThemeVersion != ThemeRegistry.Version))
                     .OrderBy(x => x.UpdatedAt).Take(25).ToListAsync(ct);
                 foreach (var movie in movies)
                 {
@@ -25,6 +26,7 @@ public sealed class RecommendationCatalogWorker(IServiceScopeFactory scopes, ILo
                     await gateway.UpsertItemAsync(movie, memberships, ct);
                     var tracked = await db.Movies.SingleAsync(x => x.TmdbId == movie.TmdbId && x.IsSeries == movie.IsSeries, ct);
                     tracked.RecommendationSyncedAt = DateTime.UtcNow;
+                    tracked.RecommendationThemeVersion = ThemeRegistry.Version;
                 }
                 if (movies.Count > 0) await db.SaveChangesAsync(ct);
                 await Task.Delay(TimeSpan.FromSeconds(10), ct);

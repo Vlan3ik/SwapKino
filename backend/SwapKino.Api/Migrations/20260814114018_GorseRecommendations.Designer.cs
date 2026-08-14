@@ -423,6 +423,9 @@ namespace SwapKino.Api.Migrations
                     b.Property<DateTime?>("RecommendationSyncedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("RecommendationThemeVersion")
+                        .HasColumnType("integer");
+
                     b.Property<string>("ReleaseDate")
                         .HasColumnType("text");
 
@@ -569,6 +572,8 @@ namespace SwapKino.Api.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("TmdbId", "IsSeries", "ThemeSlug");
+
+                    b.HasIndex("ThemeSlug", "ThemeVersion");
 
                     b.ToTable("MovieThemeMemberships");
                 });

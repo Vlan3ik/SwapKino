@@ -14,7 +14,7 @@ cache_expire = "72h"
 [recommend.data_source]
 positive_feedback_types = ["positive", "strong_positive"]
 read_feedback_types = ["read"]
-negative_feedback_types = ["negative"]
+negative_feedback_types = ["negative", "strong_negative"]
 
 [recommend.collaborative]
 type = "mf"
@@ -22,6 +22,15 @@ type = "mf"
 [recommend.ranker]
 type = "fm"
 recommenders = ["latest", "collaborative", "item-to-item/neighbors", "user-to-user/neighbors"]
+
+[[recommend.item-to-item]]
+name = "neighbors"
+type = "tags"
+column = "item.Labels.genres"
+
+[[recommend.user-to-user]]
+name = "neighbors"
+type = "items"
 
 [recommend.fallback]
 recommenders = ["latest"]

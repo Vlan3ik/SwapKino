@@ -33,6 +33,21 @@ public sealed class RecommendationWorker(
     private async Task Process(StreamEntry entry, CancellationToken ct)
     {
         var topic = Value(entry, "topic");
+        if (topic == "recommendations.user.deleted")
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(Value(entry, "payload"));
+                if (Guid.TryParse(document.RootElement.GetProperty("userId").GetString(), out var deletedUser))
+                {
+                    using var scope = scopes.CreateScope();
+                    await scope.ServiceProvider.GetRequiredService<RecommendationGateway>().DeleteUserAsync(deletedUser, ct);
+                }
+                await database.StreamAcknowledgeAsync(Stream, Group, entry.Id);
+            }
+            catch (Exception ex) { log.LogError(ex, "Recommendation user deletion event {EventId} failed", entry.Id); throw; }
+            return;
+        }
         if (topic != "recommendations.action") { await database.StreamAcknowledgeAsync(Stream, Group, entry.Id); return; }
         try
         {
@@ -43,18 +58,22 @@ public sealed class RecommendationWorker(
             var tmdbId = document.RootElement.GetProperty("tmdbId").GetInt32();
             var isSeries = document.RootElement.TryGetProperty("isSeries", out var seriesNode) && seriesNode.GetBoolean();
             var value = document.RootElement.TryGetProperty("value", out var valueNode) && valueNode.ValueKind == JsonValueKind.Number ? valueNode.GetDouble() : (double?)null;
+            var createdAt = document.RootElement.TryGetProperty("createdAt", out var createdAtNode) && createdAtNode.ValueKind == JsonValueKind.String && createdAtNode.TryGetDateTime(out var eventTime)
+                ? eventTime : DateTime.UtcNow;
             using var scope = scopes.CreateScope();
             var gateway = scope.ServiceProvider.GetRequiredService<RecommendationGateway>();
             var feedback = Normalize(action, value);
             if (feedback is not null)
-                await gateway.SendFeedbackAsync([new GorseFeedback(feedback, userId.ToString(), RecommendationGateway.ItemId(tmdbId, isSeries), 1, DateTime.UtcNow)], ct);
+                await gateway.SendFeedbackAsync([new GorseFeedback(feedback.Type, userId.ToString(), RecommendationGateway.ItemId(tmdbId, isSeries), feedback.Value, createdAt)], ct);
             if (document.RootElement.TryGetProperty("sessionId", out var sessionNode) && sessionNode.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sessionNode.GetString()))
             {
                 var sessionKey = $"rec:session:{userId}:{sessionNode.GetString()}";
                 await database.HashSetAsync(sessionKey, [
                     new HashEntry("lastFeedback", action),
-                    new HashEntry("feedRefreshRequested", feedback is "negative" ? 1 : 0)
+                    new HashEntry("feedRefreshRequested", feedback?.Type is "negative" or "strong_negative" ? 1 : 0)
                 ]);
+                if (feedback?.SessionNegative == true)
+                    await database.SetAddAsync($"rec:session:{userId}:{sessionNode.GetString()}:negative-items", RecommendationGateway.ItemId(tmdbId, isSeries));
                 await database.KeyExpireAsync(sessionKey, TimeSpan.FromHours(12));
             }
             await database.StreamAcknowledgeAsync(Stream, Group, entry.Id);
@@ -66,17 +85,22 @@ public sealed class RecommendationWorker(
         }
     }
 
-    private static string? Normalize(string action, double? value) => action switch
+    private static Feedback? Normalize(string action, double? value) => action switch
     {
-        "impression" or "watched" or "already_watched" or "skip" or "swipe_left" => "read",
-        "swipe_right" or "favorite" or "more_like_this" => "positive",
-        "not_for_me" or "less_like_this" or "not_interested" => "negative",
-        "rating" or "rate" or "rate_inline" when value >= 9 => "strong_positive",
-        "rating" or "rate" or "rate_inline" when value >= 7 => "positive",
-        "rating" or "rate" or "rate_inline" when value <= 5 => "negative",
-        "rating" or "rate" or "rate_inline" => "read",
+        "impression" or "watched" or "already_watched" => new("read", 1, false),
+        "skip" or "swipe_left" => new("read", 1, true),
+        "swipe_right" => new("positive", 1, false),
+        "favorite" or "more_like_this" => new("strong_positive", 2, false),
+        "not_for_me" or "less_like_this" => new("strong_negative", 2, true),
+        "not_interested" => new("negative", 1, true),
+        "rating" or "rate" or "rate_inline" when value >= 9 => new("strong_positive", value.Value, false),
+        "rating" or "rate" or "rate_inline" when value >= 7 => new("positive", value.Value, false),
+        "rating" or "rate" or "rate_inline" when value <= 5 => new("negative", 1, true),
+        "rating" or "rate" or "rate_inline" => new("read", 1, false),
         _ => null
     };
+
+    private sealed record Feedback(string Type, double Value, bool SessionNegative);
 
     private async Task EnsureGroup(CancellationToken ct)
     {

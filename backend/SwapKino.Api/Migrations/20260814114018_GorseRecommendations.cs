@@ -17,6 +17,12 @@ namespace SwapKino.Api.Migrations
                 type: "timestamp with time zone",
                 nullable: true);
 
+            migrationBuilder.AddColumn<int>(
+                name: "RecommendationThemeVersion",
+                table: "Movies",
+                type: "integer",
+                nullable: true);
+
             migrationBuilder.CreateTable(
                 name: "MovieThemeMemberships",
                 columns: table => new
@@ -39,6 +45,11 @@ namespace SwapKino.Api.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
+            migrationBuilder.CreateIndex(
+                name: "IX_MovieThemeMemberships_ThemeSlug_ThemeVersion",
+                table: "MovieThemeMemberships",
+                columns: new[] { "ThemeSlug", "ThemeVersion" });
+
         }
 
         /// <inheritdoc />
@@ -46,6 +57,10 @@ namespace SwapKino.Api.Migrations
         {
             migrationBuilder.DropTable(
                 name: "MovieThemeMemberships");
+
+            migrationBuilder.DropColumn(
+                name: "RecommendationThemeVersion",
+                table: "Movies");
 
             migrationBuilder.DropColumn(
                 name: "RecommendationSyncedAt",
