@@ -9,13 +9,20 @@ using SwapKino.Api;
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddDbContext<SwapKinoDbContext>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Default") ?? builder.Configuration["DATABASE_URL"]));
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(builder.Configuration["REDIS_URL"] ?? "redis-runtime:6379,abortConnect=false"));
+builder.Services.AddHttpClient("gorse", c =>
+{
+    c.BaseAddress = new Uri((builder.Configuration["GORSE_URL"] ?? "http://gorse-server:8087/").TrimEnd('/') + "/");
+    c.Timeout = TimeSpan.FromSeconds(3);
+});
+builder.Services.AddScoped<RecommendationGateway>();
 builder.Services.AddHttpClient("selenium", c => c.BaseAddress = new Uri(builder.Configuration["SELENIUM_URL"] ?? "http://selenium-service:8081"));
 builder.Services.AddHttpClient("tmdb", c => c.BaseAddress = new Uri((builder.Configuration["TMDB_BASE_URL"] ?? "https://api.themoviedb.org/3").TrimEnd('/') + "/"));
 builder.Services.AddScoped<TmdbClient>();
 builder.Services.AddHostedService<OutboxDispatcher>();
 builder.Services.AddHostedService<ImportStreamWorker>();
 builder.Services.AddHostedService<RecommendationWorker>();
-builder.Services.AddHostedService<RecommendationFeatureWorker>();
+builder.Services.AddHostedService<RecommendationHistorySyncWorker>();
+builder.Services.AddHostedService<RecommendationCatalogWorker>();
 var host = builder.Build();
 await host.RunAsync();
 
@@ -68,6 +75,14 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
                         Log.LogError(ex, "Outbox event {EventId} failed on attempt {Attempt}", item.Id, item.AttemptCount);
                     }
                 }
+                await CleanupPublishedEvents(db, stoppingToken);
+                // Never trim while either consumer group has pending entries.
+                // Approximate MAXLEN can otherwise discard an event that is still
+                // recoverable after a long outage.
+                var recommendationPending = await Redis.StreamPendingAsync(Stream, "swapkino-recommendations");
+                var importPending = await Redis.StreamPendingAsync(Stream, "swapkino-imports");
+                if (recommendationPending.PendingMessageCount == 0 && importPending.PendingMessageCount == 0)
+                    await Redis.StreamTrimAsync(Stream, 100_000, useApproximateMaxLength: false);
             }
             catch (Exception ex)
             {
@@ -98,6 +113,13 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
         var events = await db.OutboxEvents.Where(x => !x.Published && x.LockedBy == workerId).OrderBy(x => x.CreatedAt).ToListAsync(ct);
         await transaction.CommitAsync(ct);
         return events;
+    }
+
+    private static async Task CleanupPublishedEvents(SwapKinoDbContext db, CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-7);
+        var ids = await db.OutboxEvents.Where(x => x.Published && x.PublishedAt < cutoff).OrderBy(x => x.PublishedAt).Take(1000).Select(x => x.Id).ToListAsync(ct);
+        if (ids.Count > 0) await db.OutboxEvents.Where(x => ids.Contains(x.Id)).ExecuteDeleteAsync(ct);
     }
 }
 

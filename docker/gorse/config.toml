@@ -1,0 +1,46 @@
+[database]
+data_store = "postgres://gorse:local-gorse-password@postgres-gorse/gorse?sslmode=disable"
+cache_store = "redis://redis-gorse:6379/0"
+table_prefix = "gorse_"
+
+[master]
+http_port = 8088
+
+[server]
+api_key = ""
+default_n = 100
+auto_insert_user = true
+auto_insert_item = false
+
+[recommend]
+cache_size = 100
+cache_expire = "72h"
+
+[recommend.data_source]
+positive_feedback_types = ["positive", "strong_positive"]
+read_feedback_types = ["read"]
+negative_feedback_types = ["negative", "strong_negative"]
+
+[recommend.collaborative]
+type = "mf"
+
+[recommend.ranker]
+type = "fm"
+recommenders = ["non-personalized/quality", "collaborative", "item-to-item/neighbors", "user-to-user/neighbors"]
+
+[[recommend.non-personalized]]
+name = "quality"
+score = "item.Labels.quality / 1.0"
+filter = "item.Labels.quality > 0"
+
+[[recommend.item-to-item]]
+name = "neighbors"
+type = "tags"
+column = "item.Labels.content_tags"
+
+[[recommend.user-to-user]]
+name = "neighbors"
+type = "items"
+
+[recommend.fallback]
+recommenders = ["latest"]

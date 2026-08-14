@@ -19,6 +19,8 @@ API: `http://localhost:8000`, Swagger: `http://localhost:8000/swagger`.
 - PostgreSQL — устойчивое состояние;
 - `redis-runtime` — streams/locks/runtime с `noeviction`;
 - `redis-cache` — кэш с LRU eviction;
+- `gorse-master`, `gorse-server`, `gorse-worker` — offline retrieval/ranking и HTTP gateway;
+- `redis-gorse` и `postgres-gorse` — производные хранилища Gorse;
 - `minio` — объектное хранилище для будущих диагностических артефактов;
 - `selenium-service` — изолированный Kinopoisk scraper.
 

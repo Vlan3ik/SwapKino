@@ -38,4 +38,64 @@ public sealed class RecommendationMetricsTests
         Assert.Null(shortReel.PrimaryGenreId);
         Assert.All(ReelDefinitions.All.Where(x => x.Strategy == "genres" && x.Genres.Length > 0), reel => Assert.Equal(reel.Genres[0], reel.PrimaryGenreId));
     }
+
+    [Fact]
+    public void Theme_classifier_requires_the_declared_genre_and_keyword()
+    {
+        var movie = new Movie { TmdbId = 1, MovieGenres = [new MovieGenre { GenreId = 27 }], MovieKeywords = [new MovieKeyword { KeywordId = 12377 }] };
+        var themes = ThemeRegistry.Classify(movie).Select(x => x.Slug).ToHashSet();
+        Assert.Contains("horror", themes);
+        Assert.DoesNotContain("sport", themes);
+    }
+
+    [Fact]
+    public void Theme_aliases_keep_existing_reel_urls_compatible()
+    {
+        Assert.Equal("psychological", ThemeRegistry.CanonicalSlug("na-odnom-dyhanii"));
+        Assert.Equal("anime", ThemeRegistry.CanonicalSlug("anime-vecher"));
+    }
+
+    [Theory]
+    [InlineData("favorite", null, "strong_positive")]
+    [InlineData("more_like_this", null, "strong_positive")]
+    [InlineData("not_for_me", null, "strong_negative")]
+    [InlineData("less_like_this", null, "strong_negative")]
+    [InlineData("swipe_left", null, "read")]
+    [InlineData("rating", 10.0, "strong_positive")]
+    [InlineData("rating", 8.0, "positive")]
+    [InlineData("rating", 6.0, "read")]
+    [InlineData("rating", 4.0, "negative")]
+    public void Feedback_normalizer_preserves_signal_strength(string action, double? value, string expected)
+    {
+        var normalized = RecommendationFeedback.Normalize(action, value);
+        Assert.Equal(expected, normalized?.Type);
+    }
+
+    [Fact]
+    public void Session_negative_is_not_a_gorse_negative_feedback_type_for_swipes()
+    {
+        var normalized = RecommendationFeedback.Normalize("swipe_left", null);
+        Assert.Equal("read", normalized?.Type);
+        Assert.True(normalized?.SessionNegative);
+    }
+
+    [Fact]
+    public void Recommendation_eligibility_rejects_unenriched_zero_rating_items()
+    {
+        var movie = new Movie { Title = "Unknown", DetailsState = "ready", VoteAverage = 0, VoteCount = 0, PosterPath = "/poster.jpg" };
+        Assert.False(RecommendationEligibility.IsEligible(movie));
+        movie.VoteAverage = 7.2;
+        movie.VoteCount = 100;
+        Assert.True(RecommendationEligibility.IsEligible(movie));
+    }
+
+    [Fact]
+    public void Feedback_reconciliation_keeps_rating_when_favorite_is_removed()
+    {
+        var state = new UserMovieState { Rating = 8, Favorite = false, Watched = true };
+        var desired = RecommendationFeedback.Current(state, new UserAction { ActionType = "unfavorite" });
+        Assert.Contains(desired, x => x.Type == "positive");
+        Assert.Contains(desired, x => x.Type == "read");
+        Assert.DoesNotContain(desired, x => x.Type == "strong_positive");
+    }
 }
