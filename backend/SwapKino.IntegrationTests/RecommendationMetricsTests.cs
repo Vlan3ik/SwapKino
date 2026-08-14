@@ -54,4 +54,28 @@ public sealed class RecommendationMetricsTests
         Assert.Equal("psychological", ThemeRegistry.CanonicalSlug("na-odnom-dyhanii"));
         Assert.Equal("anime", ThemeRegistry.CanonicalSlug("anime-vecher"));
     }
+
+    [Theory]
+    [InlineData("favorite", null, "strong_positive")]
+    [InlineData("more_like_this", null, "strong_positive")]
+    [InlineData("not_for_me", null, "strong_negative")]
+    [InlineData("less_like_this", null, "strong_negative")]
+    [InlineData("swipe_left", null, "read")]
+    [InlineData("rating", 10.0, "strong_positive")]
+    [InlineData("rating", 8.0, "positive")]
+    [InlineData("rating", 6.0, "read")]
+    [InlineData("rating", 4.0, "negative")]
+    public void Feedback_normalizer_preserves_signal_strength(string action, double? value, string expected)
+    {
+        var normalized = RecommendationFeedback.Normalize(action, value);
+        Assert.Equal(expected, normalized?.Type);
+    }
+
+    [Fact]
+    public void Session_negative_is_not_a_gorse_negative_feedback_type_for_swipes()
+    {
+        var normalized = RecommendationFeedback.Normalize("swipe_left", null);
+        Assert.Equal("read", normalized?.Type);
+        Assert.True(normalized?.SessionNegative);
+    }
 }

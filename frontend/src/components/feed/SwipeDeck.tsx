@@ -57,14 +57,14 @@ export function SwipeDeck({ reelId, onExit }: { reelId: string; onExit?: () => v
 
   const refreshTail = useCallback(async () => {
     try {
-      const response = await api.reelFeed(reelId);
+      const response = await api.reelFeed(reelId, nextCursor, 20, sessionId);
       const raw = response.feedItems?.flatMap((item) => item.kind === "movie" ? [item.movie] : []) ?? response.items ?? response.results ?? [];
       const incoming = raw.map(mapApiMovie);
       await preloadMovies(incoming);
       setFeedItems((rows) => mergeFeedItems(rows.filter((item): item is MovieFeedItem => item.kind === "movie").slice(0, index + 1), incoming));
       setNextCursor(response.nextCursor ?? null);
     } catch { /* A stale tail is safer than interrupting an active deck. */ }
-  }, [index, reelId]);
+  }, [index, nextCursor, reelId, sessionId]);
 
   const submitProbe = useCallback((actionType: "more_like_this" | "less_like_this" | "not_for_me" | "already_watched" | "rate_inline", value?: number) => {
     if (!probeMovie) return;

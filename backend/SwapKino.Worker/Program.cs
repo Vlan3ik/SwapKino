@@ -21,6 +21,7 @@ builder.Services.AddScoped<TmdbClient>();
 builder.Services.AddHostedService<OutboxDispatcher>();
 builder.Services.AddHostedService<ImportStreamWorker>();
 builder.Services.AddHostedService<RecommendationWorker>();
+builder.Services.AddHostedService<RecommendationHistorySyncWorker>();
 builder.Services.AddHostedService<RecommendationCatalogWorker>();
 var host = builder.Build();
 await host.RunAsync();
@@ -74,6 +75,8 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
                         Log.LogError(ex, "Outbox event {EventId} failed on attempt {Attempt}", item.Id, item.AttemptCount);
                     }
                 }
+                await CleanupPublishedEvents(db, stoppingToken);
+                await Redis.StreamTrimAsync(Stream, 100_000, useApproximateMaxLength: true);
             }
             catch (Exception ex)
             {
@@ -104,6 +107,13 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
         var events = await db.OutboxEvents.Where(x => !x.Published && x.LockedBy == workerId).OrderBy(x => x.CreatedAt).ToListAsync(ct);
         await transaction.CommitAsync(ct);
         return events;
+    }
+
+    private static async Task CleanupPublishedEvents(SwapKinoDbContext db, CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-7);
+        var ids = await db.OutboxEvents.Where(x => x.Published && x.PublishedAt < cutoff).OrderBy(x => x.PublishedAt).Take(1000).Select(x => x.Id).ToListAsync(ct);
+        if (ids.Count > 0) await db.OutboxEvents.Where(x => ids.Contains(x.Id)).ExecuteDeleteAsync(ct);
     }
 }
 

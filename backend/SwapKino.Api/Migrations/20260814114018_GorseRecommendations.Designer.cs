@@ -527,29 +527,6 @@ namespace SwapKino.Api.Migrations
                     b.ToTable("MoviePeople");
                 });
 
-            modelBuilder.Entity("SwapKino.Api.MovieRecommendationFeature", b =>
-                {
-                    b.Property<int>("TmdbId")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("FeatureJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("FeatureVersion")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("TmdbId", "IsSeries");
-
-                    b.ToTable("MovieRecommendationFeatures");
-                });
 
             modelBuilder.Entity("SwapKino.Api.MovieThemeMembership", b =>
                 {
@@ -805,6 +782,9 @@ namespace SwapKino.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("RecommendationSyncedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("IsSeries")
                         .HasColumnType("boolean");
 
@@ -913,41 +893,6 @@ namespace SwapKino.Api.Migrations
                     b.ToTable("UserMovieStates");
                 });
 
-            modelBuilder.Entity("SwapKino.Api.UserTasteProfile", b =>
-                {
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ModelVersion")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("NegativeEmbeddingJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("NegativeProfileJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PositiveEmbeddingJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PositiveProfileJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("ProfileVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("UserId");
-
-                    b.ToTable("UserTasteProfiles");
-                });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
@@ -1058,14 +1003,6 @@ namespace SwapKino.Api.Migrations
                     b.Navigation("Movie");
                 });
 
-            modelBuilder.Entity("SwapKino.Api.MovieRecommendationFeature", b =>
-                {
-                    b.HasOne("SwapKino.Api.Movie", null)
-                        .WithMany()
-                        .HasForeignKey("TmdbId", "IsSeries")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
 
             modelBuilder.Entity("SwapKino.Api.MovieThemeMembership", b =>
                 {
@@ -1087,14 +1024,6 @@ namespace SwapKino.Api.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("SwapKino.Api.UserTasteProfile", b =>
-                {
-                    b.HasOne("SwapKino.Api.User", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
 
             modelBuilder.Entity("SwapKino.Api.Genre", b =>
                 {

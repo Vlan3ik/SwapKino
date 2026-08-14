@@ -45,7 +45,7 @@ public sealed class RecommendationWorker(
                 }
                 await database.StreamAcknowledgeAsync(Stream, Group, entry.Id);
             }
-            catch (Exception ex) { log.LogError(ex, "Recommendation user deletion event {EventId} failed", entry.Id); throw; }
+            catch (Exception ex) { await HandleFailure(entry, ex, ct); }
             return;
         }
         if (topic != "recommendations.action") { await database.StreamAcknowledgeAsync(Stream, Group, entry.Id); return; }
@@ -55,6 +55,7 @@ public sealed class RecommendationWorker(
             if (!document.RootElement.TryGetProperty("userId", out var userNode) || !Guid.TryParse(userNode.GetString(), out var userId))
                 throw new InvalidOperationException("recommendations.action has no valid userId");
             var action = document.RootElement.TryGetProperty("action", out var actionNode) ? actionNode.GetString() ?? "" : "";
+            var actionId = document.RootElement.TryGetProperty("actionId", out var actionIdNode) && Guid.TryParse(actionIdNode.GetString(), out var parsedActionId) ? parsedActionId : (Guid?)null;
             var tmdbId = document.RootElement.GetProperty("tmdbId").GetInt32();
             var isSeries = document.RootElement.TryGetProperty("isSeries", out var seriesNode) && seriesNode.GetBoolean();
             var value = document.RootElement.TryGetProperty("value", out var valueNode) && valueNode.ValueKind == JsonValueKind.Number ? valueNode.GetDouble() : (double?)null;
@@ -62,7 +63,8 @@ public sealed class RecommendationWorker(
                 ? eventTime : DateTime.UtcNow;
             using var scope = scopes.CreateScope();
             var gateway = scope.ServiceProvider.GetRequiredService<RecommendationGateway>();
-            var feedback = Normalize(action, value);
+            var db = scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
+            var feedback = RecommendationFeedback.Normalize(action, value);
             if (feedback is not null)
                 await gateway.SendFeedbackAsync([new GorseFeedback(feedback.Type, userId.ToString(), RecommendationGateway.ItemId(tmdbId, isSeries), feedback.Value, createdAt)], ct);
             if (document.RootElement.TryGetProperty("sessionId", out var sessionNode) && sessionNode.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sessionNode.GetString()))
@@ -76,31 +78,37 @@ public sealed class RecommendationWorker(
                     await database.SetAddAsync($"rec:session:{userId}:{sessionNode.GetString()}:negative-items", RecommendationGateway.ItemId(tmdbId, isSeries));
                 await database.KeyExpireAsync(sessionKey, TimeSpan.FromHours(12));
             }
+            if (actionId is Guid syncedActionId)
+            {
+                var storedAction = await db.UserActions.FindAsync([syncedActionId], ct);
+                if (storedAction is not null) { storedAction.RecommendationSyncedAt = DateTime.UtcNow; await db.SaveChangesAsync(ct); }
+            }
             await database.StreamAcknowledgeAsync(Stream, Group, entry.Id);
         }
         catch (Exception ex)
         {
-            log.LogError(ex, "Recommendation event {EventId} failed", entry.Id);
-            throw;
+            await HandleFailure(entry, ex, ct);
         }
     }
 
-    private static Feedback? Normalize(string action, double? value) => action switch
+    private async Task HandleFailure(StreamEntry entry, Exception ex, CancellationToken ct)
     {
-        "impression" or "watched" or "already_watched" => new("read", 1, false),
-        "skip" or "swipe_left" => new("read", 1, true),
-        "swipe_right" => new("positive", 1, false),
-        "favorite" or "more_like_this" => new("strong_positive", 2, false),
-        "not_for_me" or "less_like_this" => new("strong_negative", 2, true),
-        "not_interested" => new("negative", 1, true),
-        "rating" or "rate" or "rate_inline" when value >= 9 => new("strong_positive", value.Value, false),
-        "rating" or "rate" or "rate_inline" when value >= 7 => new("positive", value.Value, false),
-        "rating" or "rate" or "rate_inline" when value <= 5 => new("negative", 1, true),
-        "rating" or "rate" or "rate_inline" => new("read", 1, false),
-        _ => null
-    };
-
-    private sealed record Feedback(string Type, double Value, bool SessionNegative);
+        var pending = await database.StreamPendingMessagesAsync(Stream, Group, 1, consumer, entry.Id, entry.Id);
+        var deliveries = pending.Length == 0 ? 1 : pending[0].DeliveryCount;
+        if (deliveries >= 5)
+        {
+            await database.StreamAddAsync("swapkino:events:dead-letter", [
+                new NameValueEntry("event_id", Value(entry, "event_id")),
+                new NameValueEntry("topic", Value(entry, "topic")),
+                new NameValueEntry("payload", Value(entry, "payload")),
+                new NameValueEntry("error", ex.Message),
+                new NameValueEntry("attempts", deliveries)]);
+            await database.StreamAcknowledgeAsync(Stream, Group, entry.Id);
+            log.LogError(ex, "Recommendation event {EventId} moved to dead-letter after {Attempts} attempts", entry.Id, deliveries);
+        }
+        else log.LogError(ex, "Recommendation event {EventId} failed on delivery {Attempt}; it will be reclaimed", entry.Id, deliveries);
+        await Task.CompletedTask;
+    }
 
     private async Task EnsureGroup(CancellationToken ct)
     {

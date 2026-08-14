@@ -1,8 +1,13 @@
+[database]
+data_store = "postgres://gorse:local-gorse-password@postgres-gorse/gorse?sslmode=disable"
+cache_store = "redis://redis-gorse:6379/0"
+table_prefix = "gorse_"
+
 [master]
 http_port = 8088
 
 [server]
-api_key = "change-gorse-api-key"
+api_key = ""
 default_n = 100
 auto_insert_user = true
 auto_insert_item = true

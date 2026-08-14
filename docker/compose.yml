@@ -27,39 +27,51 @@ services:
     cpus: 0.25
 
   redis-gorse:
-    image: redis:7-alpine
-    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    image: redis/redis-stack-server@sha256:02c6fbcb146638f2943b501ab184d5ebff2c11838c6057f2838d92bd0ab9ee9d
+    restart: unless-stopped
     volumes: ["redis-gorse-data:/data"]
 
   postgres-gorse:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: gorse
-      POSTGRES_USER: gorse
-      POSTGRES_PASSWORD: gorse
+      POSTGRES_DB: ${GORSE_DB_NAME:-gorse}
+      POSTGRES_USER: ${GORSE_DB_USER:-gorse}
+      POSTGRES_PASSWORD: ${GORSE_DB_PASSWORD:-local-gorse-password}
     volumes: ["postgres-gorse-data:/var/lib/postgresql/data"]
-    healthcheck: {test: ["CMD-SHELL", "pg_isready -U gorse -d gorse"], interval: 5s, timeout: 5s, retries: 10}
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"], interval: 5s, timeout: 5s, retries: 10}
 
   gorse-master:
-    image: zhenghaoz/gorse-master:latest
-    command: ["-c", "/etc/gorse/config.toml", "--log-path", "/var/log/gorse/master.log", "--cache-path", "/var/lib/gorse/master_cache.data"]
+    image: zhenghaoz/gorse-master@sha256:a765b47432eca0fdf5f03830d158b387d15f6370b46ac5fb5b7f5b23aff1d061
+    command: ["-c", "/etc/gorse/config.toml", "--log-path", "/var/log/gorse/master.log", "--cache-path", "/var/lib/gorse/master"]
     environment:
-      GORSE_DATA_STORE: postgres://gorse:gorse@postgres-gorse/gorse?sslmode=disable
+      GORSE_DATA_STORE: postgres://${GORSE_DB_USER:-gorse}:${GORSE_DB_PASSWORD:-local-gorse-password}@postgres-gorse/${GORSE_DB_NAME:-gorse}?sslmode=disable
       GORSE_CACHE_STORE: redis://redis-gorse:6379/0
+      GORSE_SERVER_API_KEY: ${GORSE_API_KEY:-local-gorse-api-key}
     volumes: ["./gorse/config.toml:/etc/gorse/config.toml:ro", "gorse-master-data:/var/lib/gorse", "gorse-logs:/var/log/gorse"]
     depends_on: {postgres-gorse: {condition: service_healthy}, redis-gorse: {condition: service_started}}
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
 
   gorse-server:
-    image: zhenghaoz/gorse-server:latest
-    command: ["--master-host", "gorse-master", "--master-port", "8086", "--http-host", "0.0.0.0", "--http-port", "8087", "--log-path", "/var/log/gorse/server.log", "--cache-path", "/var/lib/gorse/server_cache.data"]
+    image: zhenghaoz/gorse-server@sha256:51d7ea823d80a98dcdd11b80bd7629944057bf6666c2c591c0a02eb48761b5a6
+    command: ["--master-host", "gorse-master", "--master-port", "8086", "--http-host", "0.0.0.0", "--http-port", "8087", "--log-path", "/var/log/gorse/server.log", "--cache-path", "/var/lib/gorse/server"]
     volumes: ["gorse-server-data:/var/lib/gorse", "gorse-logs:/var/log/gorse"]
     depends_on: {gorse-master: {condition: service_started}}
+    restart: unless-stopped
+    healthcheck: {test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8087'"], interval: 10s, timeout: 5s, retries: 12, start_period: 20s}
+    mem_limit: 512m
+    cpus: 1.0
 
   gorse-worker:
-    image: zhenghaoz/gorse-worker:latest
-    command: ["--master-host", "gorse-master", "--master-port", "8086", "--http-host", "0.0.0.0", "--http-port", "8089", "--log-path", "/var/log/gorse/worker.log", "--cache-path", "/var/lib/gorse/worker_cache.data"]
+    image: zhenghaoz/gorse-worker@sha256:5f95b3c717ded0d5b7ff5b8c07715e16f0cfa7cefdc3d03173ecd8899095ed5f
+    command: ["--master-host", "gorse-master", "--master-port", "8086", "--http-host", "0.0.0.0", "--http-port", "8089", "--log-path", "/var/log/gorse/worker.log", "--cache-path", "/var/lib/gorse/worker"]
     volumes: ["gorse-worker-data:/var/lib/gorse", "gorse-logs:/var/log/gorse"]
     depends_on: {gorse-master: {condition: service_started}}
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1.0
 
   minio:
     image: minio/minio:latest
@@ -82,7 +94,7 @@ services:
       REDIS_URL: redis-runtime:6379,abortConnect=false
       REDIS_CACHE_URL: redis-cache:6379,abortConnect=false
       GORSE_URL: http://gorse-server:8087/
-      GORSE_API_KEY: change-gorse-api-key
+      GORSE_API_KEY: ${GORSE_API_KEY:-local-gorse-api-key}
       SELENIUM_URL: http://selenium-service:8081
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minio
@@ -109,7 +121,7 @@ services:
       DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
       REDIS_URL: redis-runtime:6379,abortConnect=false
       GORSE_URL: http://gorse-server:8087/
-      GORSE_API_KEY: change-gorse-api-key
+      GORSE_API_KEY: ${GORSE_API_KEY:-local-gorse-api-key}
       SELENIUM_URL: http://selenium-service:8081
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-before-production}
     env_file: [../backend/.env]

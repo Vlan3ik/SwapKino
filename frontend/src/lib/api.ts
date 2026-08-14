@@ -301,9 +301,10 @@ export const api = {
   favorites: (query: LibraryQuery = {}) => request<ApiLibraryPage>(`/favorites?${libraryParams(query)}`, { signal: query.signal }),
   ratings: (query: LibraryQuery = {}) => request<ApiLibraryPage>(`/ratings?${libraryParams(query)}`, { signal: query.signal }),
   reels: () => request<{ items?: ApiReel[]; results?: ApiReel[] } | ApiReel[]>("/reels"),
-  reelFeed: (slug: string, cursor?: string | null, limit = 20) => {
+  reelFeed: (slug: string, cursor?: string | null, limit = 20, sessionId?: string | null) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
+    if (sessionId) params.set("sessionId", sessionId);
     return request<ReelFeed>(`/reels/${encodeURIComponent(slug)}/feed?${params}`);
   },
   action: (payload: {
