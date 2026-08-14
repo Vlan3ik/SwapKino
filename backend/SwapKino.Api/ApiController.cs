@@ -631,14 +631,29 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var keys = requested.Where(x => !excluded.Contains(x)).Distinct().ToList();
         if (keys.Count < 20 && isRecommendationTheme)
         {
+            var themeRule = ThemeRegistry.Find(canonicalTheme);
             var local = await db.MovieThemeMemberships.AsNoTracking()
                 .Where(x => x.ThemeSlug == canonicalTheme && x.ThemeVersion == ThemeRegistry.Version)
                 .OrderByDescending(x => x.Confidence)
                 .Join(db.Movies.AsNoTracking(), membership => new { membership.TmdbId, membership.IsSeries }, movie => new { movie.TmdbId, movie.IsSeries }, (_, movie) => movie)
-                .Where(x => !x.Adult && (x.PosterPath != null || x.BackdropPath != null))
+                .Where(x => !x.Adult && (reel.IsSeries == null || x.IsSeries == reel.IsSeries) && (x.PosterPath != null || x.BackdropPath != null))
                 .OrderByDescending(x => x.Popularity).ThenByDescending(x => x.VoteCount).Take(120)
                 .Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct);
             keys.AddRange(local.Where(x => !excluded.Contains(x) && !keys.Contains(x)));
+
+            // Theme classification is intentionally asynchronous. During the initial
+            // backfill, genre-backed themes must still have a useful catalog fallback;
+            // keyword-required themes stay strict until their memberships are built.
+            if (keys.Count < 20 && themeRule is { RequiresKeyword: false, RequiredGenres.Length: > 0 })
+            {
+                var genreFallback = await db.Movies.AsNoTracking()
+                    .Where(x => !x.Adult && (reel.IsSeries == null || x.IsSeries == reel.IsSeries) &&
+                        (x.PosterPath != null || x.BackdropPath != null) &&
+                        x.MovieGenres.Any(g => themeRule.RequiredGenres.Contains(g.GenreId)))
+                    .OrderByDescending(x => x.Popularity).ThenByDescending(x => x.VoteCount).Take(120)
+                    .Select(x => new MovieKey(x.TmdbId, x.IsSeries)).ToListAsync(ct);
+                keys.AddRange(genreFallback.Where(x => !excluded.Contains(x) && !keys.Contains(x)));
+            }
         }
         if (keys.Count < 20 && !isRecommendationTheme)
         {
