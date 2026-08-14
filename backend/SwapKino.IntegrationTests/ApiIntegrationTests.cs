@@ -59,7 +59,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Registration_and_duplicate_email_are_handled()
     {
-        var request = new { email = "integration@example.test", password = "IntegrationPass123!", displayName = "Integration" };
+        var request = new { email = "integration@example.test", password = "IntegrationPass123!", displayName = "Integration", privacyConsent = true };
         var first = await client.PostAsJsonAsync("/api/v1/auth/register", request);
         var second = await client.PostAsJsonAsync("/api/v1/auth/register", request);
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
@@ -95,14 +95,32 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
         await using(var scope=factory.Services.CreateAsyncScope())
         {
             var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
-            var thriller=await db.Genres.SingleOrDefaultAsync(x=>x.TmdbId==53);
-            if(thriller is null){thriller=new Genre{TmdbId=53,Slug="thriller",Name="Триллер"};db.Genres.Add(thriller);}
+            var genreIds = new[] { 18, 27, 35, 53, 80 };
+            var genreRows = new Dictionary<int, Genre>();
+            foreach (var genreId in genreIds)
+            {
+                var genre = await db.Genres.SingleOrDefaultAsync(x => x.TmdbId == genreId);
+                if (genre is null)
+                {
+                    genre = new Genre { TmdbId = genreId, Slug = $"genre-{genreId}", Name = $"Genre {genreId}" };
+                    db.Genres.Add(genre);
+                }
+                genreRows[genreId] = genre;
+            }
             for(var index=0;index<4;index++)
             {
                 var id=5100+index;if(await db.Movies.AnyAsync(x=>x.TmdbId==id&&!x.IsSeries))continue;
                 var movie=new Movie{TmdbId=id,Title=$"Reel candidate {index}",BackdropPath=$"/reel-{index}.jpg",Popularity=100-index,VoteAverage=8,VoteCount=1000-index};
-                db.Movies.Add(movie);db.MovieGenres.Add(new MovieGenre{TmdbId=id,GenreId=53,Movie=movie,Genre=thriller});
+                var genreId = index switch { 0 => 27, 1 => 35, 2 => 80, _ => 53 };
+                db.Movies.Add(movie);db.MovieGenres.Add(new MovieGenre{TmdbId=id,GenreId=genreId,Movie=movie,Genre=genreRows[genreId]});
             }
+            var psychological = new Movie { TmdbId = 5200, Title = "Psychological candidate", BackdropPath = "/psychological.jpg", DetailsState = "ready", VoteAverage = 8, VoteCount = 100 };
+            db.Movies.Add(psychological);
+            db.MovieGenres.Add(new MovieGenre { TmdbId = 5200, GenreId = 18, Movie = psychological });
+            var psychologicalKeyword = await db.Keywords.SingleOrDefaultAsync(x => x.TmdbId == 362567) ?? new Keyword { TmdbId = 362567, Slug = "psychological", Name = "Psychological" };
+            if (psychologicalKeyword.TmdbId == 362567 && !await db.Keywords.AnyAsync(x => x.TmdbId == 362567)) db.Keywords.Add(psychologicalKeyword);
+            db.MovieKeywords.Add(new MovieKeyword { TmdbId = 5200, KeywordId = 362567, Movie = psychological, Keyword = psychologicalKeyword });
+            db.MovieThemeMemberships.Add(new MovieThemeMembership { TmdbId = 5200, ThemeSlug = "psychological", ThemeVersion = ThemeRegistry.Version, Confidence = 1, Movie = psychological });
             await db.SaveChangesAsync();
         }
 
@@ -178,7 +196,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Library_keeps_rating_favorite_and_watched_as_independent_state()
     {
-        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="state@example.test",password="IntegrationPass123!",displayName="State"})).Content.ReadFromJsonAsync<JsonElement>();
+        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="state@example.test",password="IntegrationPass123!",displayName="State",privacyConsent=true})).Content.ReadFromJsonAsync<JsonElement>();
         client.DefaultRequestHeaders.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",auth.GetProperty("accessToken").GetString());
         await using(var scope=factory.Services.CreateAsyncScope()){var db=scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();db.Movies.Add(new Movie{TmdbId=777,Title="State movie"});await db.SaveChangesAsync();}
         Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/v1/actions",new{tmdbId=777,actionType="rating",value=8,idempotencyKey="rate-777"})).StatusCode);
@@ -189,7 +207,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Swipe_right_skip_and_dislike_have_distinct_state_effects()
     {
-        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="signals@example.test",password="IntegrationPass123!",displayName="Signals"})).Content.ReadFromJsonAsync<JsonElement>();
+        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="signals@example.test",password="IntegrationPass123!",displayName="Signals",privacyConsent=true})).Content.ReadFromJsonAsync<JsonElement>();
         client.DefaultRequestHeaders.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",auth.GetProperty("accessToken").GetString());
         await using(var scope=factory.Services.CreateAsyncScope())
         {
@@ -210,7 +228,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Profile_favorites_and_ratings_are_paginated_and_include_statistics()
     {
-        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="profile@example.test",password="IntegrationPass123!",displayName="Profile"})).Content.ReadFromJsonAsync<JsonElement>();
+        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="profile@example.test",password="IntegrationPass123!",displayName="Profile",privacyConsent=true})).Content.ReadFromJsonAsync<JsonElement>();
         client.DefaultRequestHeaders.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",auth.GetProperty("accessToken").GetString());
         await using(var scope=factory.Services.CreateAsyncScope())
         {
@@ -312,7 +330,7 @@ public sealed class ApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Failed_import_with_staged_items_can_resume_without_losing_checkpoint()
     {
-        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="resume-import@example.test",password="IntegrationPass123!",displayName="Resume"})).Content.ReadFromJsonAsync<JsonElement>();
+        var auth=await (await client.PostAsJsonAsync("/api/v1/auth/register",new{email="resume-import@example.test",password="IntegrationPass123!",displayName="Resume",privacyConsent=true})).Content.ReadFromJsonAsync<JsonElement>();
         client.DefaultRequestHeaders.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",auth.GetProperty("accessToken").GetString());
         var userId=auth.GetProperty("user").GetProperty("id").GetGuid();
         var job=new ImportJob{UserId=userId,ProfileUrl="https://www.kinopoisk.ru/user/12345/",Status="Failed",Phase="Matching",Progress=40,PhaseProgress=0,DiscoveredCount=12,PagesProcessed=2,PagesTotal=2,Checkpoint="{\"phase\":\"Matching\",\"progress\":40}",Error="System.OutOfMemoryException"};

@@ -78,4 +78,24 @@ public sealed class RecommendationMetricsTests
         Assert.Equal("read", normalized?.Type);
         Assert.True(normalized?.SessionNegative);
     }
+
+    [Fact]
+    public void Recommendation_eligibility_rejects_unenriched_zero_rating_items()
+    {
+        var movie = new Movie { Title = "Unknown", DetailsState = "ready", VoteAverage = 0, VoteCount = 0, PosterPath = "/poster.jpg" };
+        Assert.False(RecommendationEligibility.IsEligible(movie));
+        movie.VoteAverage = 7.2;
+        movie.VoteCount = 100;
+        Assert.True(RecommendationEligibility.IsEligible(movie));
+    }
+
+    [Fact]
+    public void Feedback_reconciliation_keeps_rating_when_favorite_is_removed()
+    {
+        var state = new UserMovieState { Rating = 8, Favorite = false, Watched = true };
+        var desired = RecommendationFeedback.Current(state, new UserAction { ActionType = "unfavorite" });
+        Assert.Contains(desired, x => x.Type == "positive");
+        Assert.Contains(desired, x => x.Type == "read");
+        Assert.DoesNotContain(desired, x => x.Type == "strong_positive");
+    }
 }

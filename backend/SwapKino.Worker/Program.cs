@@ -76,7 +76,13 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
                     }
                 }
                 await CleanupPublishedEvents(db, stoppingToken);
-                await Redis.StreamTrimAsync(Stream, 100_000, useApproximateMaxLength: true);
+                // Never trim while either consumer group has pending entries.
+                // Approximate MAXLEN can otherwise discard an event that is still
+                // recoverable after a long outage.
+                var recommendationPending = await Redis.StreamPendingAsync(Stream, "swapkino-recommendations");
+                var importPending = await Redis.StreamPendingAsync(Stream, "swapkino-imports");
+                if (recommendationPending.PendingMessageCount == 0 && importPending.PendingMessageCount == 0)
+                    await Redis.StreamTrimAsync(Stream, 100_000, useApproximateMaxLength: false);
             }
             catch (Exception ex)
             {

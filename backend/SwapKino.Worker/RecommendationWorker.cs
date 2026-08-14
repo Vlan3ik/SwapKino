@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 using SwapKino.Api;
 
@@ -65,8 +66,18 @@ public sealed class RecommendationWorker(
             var gateway = scope.ServiceProvider.GetRequiredService<RecommendationGateway>();
             var db = scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
             var feedback = RecommendationFeedback.Normalize(action, value);
-            if (feedback is not null)
-                await gateway.SendFeedbackAsync([new GorseFeedback(feedback.Type, userId.ToString(), RecommendationGateway.ItemId(tmdbId, isSeries), feedback.Value, createdAt)], ct);
+            var movie = await db.Movies.AsNoTracking().SingleOrDefaultAsync(x => x.TmdbId == tmdbId && x.IsSeries == isSeries, ct);
+            if (movie is null || !RecommendationEligibility.IsEligible(movie))
+            {
+                // Keep the action unsynced. HistorySync will reconcile it after
+                // catalog enrichment/upsert has made the item eligible.
+                await database.StreamAcknowledgeAsync(Stream, Group, entry.Id);
+                return;
+            }
+            var state = await db.UserMovieStates.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId && x.TmdbId == tmdbId && x.IsSeries == isSeries, ct);
+            var latest = new UserAction { UserId = userId, TmdbId = tmdbId, IsSeries = isSeries, ActionType = action, Value = value, CreatedAt = createdAt };
+            var desired = RecommendationFeedback.Current(state, latest);
+            await gateway.ReconcileFeedbackAsync(userId, tmdbId, isSeries, desired, createdAt, ct);
             if (document.RootElement.TryGetProperty("sessionId", out var sessionNode) && sessionNode.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sessionNode.GetString()))
             {
                 var sessionKey = $"rec:session:{userId}:{sessionNode.GetString()}";
@@ -75,7 +86,17 @@ public sealed class RecommendationWorker(
                     new HashEntry("feedRefreshRequested", feedback?.Type is "negative" or "strong_negative" ? 1 : 0)
                 ]);
                 if (feedback?.SessionNegative == true)
-                    await database.SetAddAsync($"rec:session:{userId}:{sessionNode.GetString()}:negative-items", RecommendationGateway.ItemId(tmdbId, isSeries));
+                {
+                    var negativeSet = $"rec:session:{userId}:{sessionNode.GetString()}:negative-items";
+                    await database.SetAddAsync(negativeSet, RecommendationGateway.ItemId(tmdbId, isSeries));
+                    await database.KeyExpireAsync(negativeSet, TimeSpan.FromHours(12));
+                    var intentGenres = await db.MovieGenres.AsNoTracking()
+                        .Where(x => x.TmdbId == tmdbId && x.IsSeries == isSeries)
+                        .Select(x => x.GenreId).ToListAsync(ct);
+                    var intentKey = $"rec:session:{userId}:{sessionNode.GetString()}:intent-genres";
+                    foreach (var genreId in intentGenres) await database.SetAddAsync(intentKey, genreId);
+                    await database.KeyExpireAsync(intentKey, TimeSpan.FromHours(12));
+                }
                 await database.KeyExpireAsync(sessionKey, TimeSpan.FromHours(12));
             }
             if (actionId is Guid syncedActionId)

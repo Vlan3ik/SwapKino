@@ -42,8 +42,13 @@ public sealed class RecommendationGateway(IHttpClientFactory factory, IConfigura
             genres = movie.MovieGenres.Select(x => $"genre:{x.GenreId}"),
             keywords = movie.MovieKeywords.Select(x => $"keyword:{x.KeywordId}"),
             people = movie.MoviePeople.Where(x => x.Department is "Director" or "Actor").Take(10).Select(x => $"person:{x.PersonId}"),
+            content_tags = movie.MovieGenres.Select(x => $"genre:{x.GenreId}")
+                .Concat(movie.MovieKeywords.Select(x => $"keyword:{x.KeywordId}"))
+                .Concat(movie.MoviePeople.Where(x => x.Department is "Director" or "Actor").Take(10).Select(x => $"person:{x.PersonId}"))
+                .Concat(movie.OriginalLanguage is { Length: > 0 } language ? [$"language:{language}"] : []),
             language = movie.OriginalLanguage,
-            year = int.TryParse(movie.ReleaseDate?.Take(4).ToString(), out var year) ? year : (int?)null
+            year = int.TryParse(movie.ReleaseDate?.Take(4).ToString(), out var year) ? year : (int?)null,
+            quality = movie.VoteAverage * Math.Log10(Math.Max(1, movie.VoteCount))
         };
         var releaseDate = DateTime.TryParse(movie.ReleaseDate, out var released) ? released : movie.UpdatedAt;
         var item = new { ItemId = ItemId(movie.TmdbId, movie.IsSeries), IsHidden = movie.Adult, Categories = categories, Labels = labels, Comment = movie.Overview ?? movie.Title, Timestamp = releaseDate };
@@ -57,6 +62,36 @@ public sealed class RecommendationGateway(IHttpClientFactory factory, IConfigura
         if (rows.Length == 0) return;
         using var response = await SendAsync(HttpMethod.Put, "api/feedback", JsonContent.Create(rows), ct);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task DeleteFeedbackAsync(Guid userId, int tmdbId, bool isSeries, CancellationToken ct)
+    {
+        var itemId = Uri.EscapeDataString(ItemId(tmdbId, isSeries));
+        var user = Uri.EscapeDataString(userId.ToString());
+        foreach (var type in new[] { "read", "positive", "strong_positive", "negative", "strong_negative" })
+        {
+            using var response = await SendAsync(HttpMethod.Delete,
+                $"api/feedback/{type}/{user}/{itemId}", null, ct);
+            if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound))
+                response.EnsureSuccessStatusCode();
+        }
+    }
+
+    public async Task ReconcileFeedbackAsync(Guid userId, int tmdbId, bool isSeries,
+        IEnumerable<NormalizedRecommendationFeedback> desired, DateTime timestamp, CancellationToken ct)
+    {
+        await DeleteFeedbackAsync(userId, tmdbId, isSeries, ct);
+        var itemId = ItemId(tmdbId, isSeries);
+        var feedback = desired.Select(x => new GorseFeedback(x.Type, userId.ToString(), itemId, x.Value, timestamp));
+        await SendFeedbackAsync(feedback, ct);
+    }
+
+    public async Task DeleteItemAsync(Movie movie, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Delete,
+            $"api/item/{Uri.EscapeDataString(ItemId(movie.TmdbId, movie.IsSeries))}", null, ct);
+        if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound))
+            response.EnsureSuccessStatusCode();
     }
 
     public async Task DeleteUserAsync(Guid userId, CancellationToken ct)

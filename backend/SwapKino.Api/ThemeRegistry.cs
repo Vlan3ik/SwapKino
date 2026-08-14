@@ -18,7 +18,7 @@ public sealed record ThemeMembership(string Slug, double Confidence);
 
 public static class ThemeRegistry
 {
-    public const int Version = 1;
+    public const int Version = 2;
 
     // IDs are the verified TMDB genre/keyword IDs already used by the catalog.
     // The registry is deliberately local: classification never calls TMDB.

@@ -14,6 +14,18 @@ jobs:
         with:
           dotnet-version: 8.x
       - run: dotnet build backend/SwapKino.sln
+      - run: dotnet test backend/SwapKino.sln --no-build --filter FullyQualifiedName~RecommendationMetricsTests
+      - run: docker compose -f docker/compose.yml up -d postgres-gorse redis-gorse gorse-master gorse-server gorse-worker
+      - run: |
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18087/api/health/ready >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - run: dotnet test backend/SwapKino.sln --filter FullyQualifiedName~GorseIntegrationTests
+        env:
+          GORSE_TEST_URL: http://127.0.0.1:18087/
+          GORSE_TEST_API_KEY: local-gorse-api-key
       - uses: actions/setup-node@v4
         with:
           node-version: 22

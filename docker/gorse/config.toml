@@ -10,7 +10,7 @@ http_port = 8088
 api_key = ""
 default_n = 100
 auto_insert_user = true
-auto_insert_item = true
+auto_insert_item = false
 
 [recommend]
 cache_size = 100
@@ -26,12 +26,17 @@ type = "mf"
 
 [recommend.ranker]
 type = "fm"
-recommenders = ["latest", "collaborative", "item-to-item/neighbors", "user-to-user/neighbors"]
+recommenders = ["non-personalized/quality", "collaborative", "item-to-item/neighbors", "user-to-user/neighbors"]
+
+[[recommend.non-personalized]]
+name = "quality"
+score = "item.Labels.quality / 1.0"
+filter = "item.Labels.quality > 0"
 
 [[recommend.item-to-item]]
 name = "neighbors"
 type = "tags"
-column = "item.Labels.genres"
+column = "item.Labels.content_tags"
 
 [[recommend.user-to-user]]
 name = "neighbors"

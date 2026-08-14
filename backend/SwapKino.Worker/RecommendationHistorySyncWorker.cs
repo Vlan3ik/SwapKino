@@ -12,14 +12,22 @@ public sealed class RecommendationHistorySyncWorker(IServiceScopeFactory scopes,
                 using var scope = scopes.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<SwapKinoDbContext>();
                 var gateway = scope.ServiceProvider.GetRequiredService<RecommendationGateway>();
-                var actions = await db.UserActions.Where(x => x.RecommendationSyncedAt == null).OrderBy(x => x.CreatedAt).Take(250).ToListAsync(ct);
+                var eligibleMovies = RecommendationEligibility.Apply(db.Movies.AsNoTracking())
+                    .Select(x => new { x.TmdbId, x.IsSeries });
+                var actions = await db.UserActions
+                    .Where(x => x.RecommendationSyncedAt == null)
+                    .Join(eligibleMovies,
+                        action => new { action.TmdbId, action.IsSeries }, movie => new { movie.TmdbId, movie.IsSeries }, (action, movie) => action)
+                    .OrderBy(x => x.CreatedAt).Take(250).ToListAsync(ct);
                 if (actions.Count > 0)
                 {
-                    var feedback = actions.Select(x => (Action: x, Normalized: RecommendationFeedback.Normalize(x.ActionType, x.Value)))
-                        .Where(x => x.Normalized is not null)
-                        .Select(x => new GorseFeedback(x.Normalized!.Type, x.Action.UserId.ToString(), RecommendationGateway.ItemId(x.Action.TmdbId, x.Action.IsSeries), x.Normalized.Value, x.Action.CreatedAt))
-                        .ToArray();
-                    if (feedback.Length > 0) await gateway.SendFeedbackAsync(feedback, ct);
+                    foreach (var group in actions.GroupBy(x => new { x.UserId, x.TmdbId, x.IsSeries }))
+                    {
+                        var state = await db.UserMovieStates.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == group.Key.UserId && x.TmdbId == group.Key.TmdbId && x.IsSeries == group.Key.IsSeries, ct);
+                        var latest = group.OrderByDescending(x => x.CreatedAt).First();
+                        await gateway.ReconcileFeedbackAsync(group.Key.UserId, group.Key.TmdbId, group.Key.IsSeries,
+                            RecommendationFeedback.Current(state, latest), latest.CreatedAt, ct);
+                    }
                     foreach (var action in actions) action.RecommendationSyncedAt = DateTime.UtcNow;
                     await db.SaveChangesAsync(ct);
                 }

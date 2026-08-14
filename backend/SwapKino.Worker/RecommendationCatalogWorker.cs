@@ -23,12 +23,18 @@ public sealed class RecommendationCatalogWorker(IServiceScopeFactory scopes, ILo
                     var existing = await db.MovieThemeMemberships.Where(x => x.TmdbId == movie.TmdbId && x.IsSeries == movie.IsSeries).ToListAsync(ct);
                     db.MovieThemeMemberships.RemoveRange(existing);
                     db.MovieThemeMemberships.AddRange(memberships.Select(x => new MovieThemeMembership { TmdbId = movie.TmdbId, IsSeries = movie.IsSeries, ThemeSlug = x.Slug, Confidence = x.Confidence, ThemeVersion = ThemeRegistry.Version }));
-                    await gateway.UpsertItemAsync(movie, memberships, ct);
+                    // Classification is local source-of-truth. Persist it before the
+                    // network call so a Gorse outage cannot block theme backfill.
+                    await db.SaveChangesAsync(ct);
+                    if (RecommendationEligibility.IsEligible(movie))
+                        await gateway.UpsertItemAsync(movie, memberships, ct);
+                    else
+                        await gateway.DeleteItemAsync(movie, ct);
                     var tracked = await db.Movies.SingleAsync(x => x.TmdbId == movie.TmdbId && x.IsSeries == movie.IsSeries, ct);
                     tracked.RecommendationSyncedAt = DateTime.UtcNow;
                     tracked.RecommendationThemeVersion = ThemeRegistry.Version;
+                    await db.SaveChangesAsync(ct);
                 }
-                if (movies.Count > 0) await db.SaveChangesAsync(ct);
                 await Task.Delay(TimeSpan.FromSeconds(10), ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { }

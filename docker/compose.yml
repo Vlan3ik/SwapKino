@@ -58,6 +58,7 @@ services:
     image: zhenghaoz/gorse-server@sha256:51d7ea823d80a98dcdd11b80bd7629944057bf6666c2c591c0a02eb48761b5a6
     command: ["--master-host", "gorse-master", "--master-port", "8086", "--http-host", "0.0.0.0", "--http-port", "8087", "--log-path", "/var/log/gorse/server.log", "--cache-path", "/var/lib/gorse/server"]
     volumes: ["gorse-server-data:/var/lib/gorse", "gorse-logs:/var/log/gorse"]
+    ports: ["127.0.0.1:18087:8087"]
     depends_on: {gorse-master: {condition: service_started}}
     restart: unless-stopped
     healthcheck: {test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8087'"], interval: 10s, timeout: 5s, retries: 12, start_period: 20s}
