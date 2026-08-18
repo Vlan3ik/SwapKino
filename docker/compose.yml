@@ -121,6 +121,9 @@ services:
       dockerfile: Dockerfile
     environment:
       SERVICE: worker
+      DOTNET_GCHeapHardLimitPercent: ${WORKER_GC_HEAP_LIMIT_PERCENT:-18}
+      DOTNET_ProcessorCount: ${WORKER_PROCESSOR_COUNT:-1}
+      COMPlus_ThreadPool_ForceMinWorkerThreads: "1"
       DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=${POSTGRES_PASSWORD:-swapkino}
       REDIS_URL: redis-runtime:6379,abortConnect=false
       GORSE_URL: http://gorse-server:8087/
@@ -129,8 +132,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-before-production}
     env_file: [../backend/.env]
     depends_on: {postgres: {condition: service_healthy}, api: {condition: service_started}, selenium-service: {condition: service_started}, gorse-worker: {condition: service_started}}
-    mem_limit: 384m
-    cpus: 0.5
+    mem_limit: ${WORKER_MEM_LIMIT:-256m}
+    memswap_limit: ${WORKER_MEMSWAP_LIMIT:-256m}
+    cpus: ${WORKER_CPUS:-0.25}
+    pids_limit: ${WORKER_PIDS_LIMIT:-128}
+    init: true
 
   selenium-service:
     build:

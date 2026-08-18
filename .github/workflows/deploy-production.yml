@@ -93,7 +93,8 @@ jobs:
             exit 1
           fi
 
-          docker compose -p swapkino-prod -f docker/compose.yml up -d --build --remove-orphans
+          export COMPOSE_PARALLEL_LIMIT=1
+          docker compose --parallel 1 -p swapkino-prod -f docker/compose.yml up -d --build --remove-orphans
           # API/frontend containers are recreated during deploy. Reload nginx so
           # its upstream DNS entries point at the new container IPs instead of
           # returning 502 for the old, removed API container.
