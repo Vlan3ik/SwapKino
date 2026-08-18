@@ -33,3 +33,9 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - name: Prepare CI-only environment files
+        run: |
+          cp backend/.env.example backend/.env
+          cp backend/SeleniumService/.env.example backend/SeleniumService/.env
+      - name: Run Docker smoke test
+        run: ./tests/docker-smoke.sh

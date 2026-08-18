@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: swapkino
       POSTGRES_USER: swapkino
-      POSTGRES_PASSWORD: swapkino
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-swapkino}
     volumes: ["postgres-data:/var/lib/postgresql/data"]
     restart: unless-stopped
     healthcheck: {test: ["CMD-SHELL", "pg_isready -U swapkino -d swapkino"], interval: 5s, timeout: 5s, retries: 10}
@@ -77,7 +77,9 @@ services:
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
-    environment: {MINIO_ROOT_USER: minio, MINIO_ROOT_PASSWORD: minio-secret-change-me}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio-secret-change-me}
     volumes: ["minio-data:/data"]
     ports: ["127.0.0.1:19000:9000", "127.0.0.1:19001:9001"]
     mem_limit: 512m
@@ -91,15 +93,15 @@ services:
     environment:
       SERVICE: api
       ASPNETCORE_URLS: http://+:8000
-      DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
+      DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=${POSTGRES_PASSWORD:-swapkino}
       REDIS_URL: redis-runtime:6379,abortConnect=false
       REDIS_CACHE_URL: redis-cache:6379,abortConnect=false
       GORSE_URL: http://gorse-server:8087/
       GORSE_API_KEY: ${GORSE_API_KEY:-local-gorse-api-key}
       SELENIUM_URL: http://selenium-service:8081
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minio
-      MINIO_SECRET_KEY: minio-secret-change-me
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio-secret-change-me}
       MINIO_BUCKET: swapkino-uploads
       MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:3000}
@@ -119,7 +121,7 @@ services:
       dockerfile: Dockerfile
     environment:
       SERVICE: worker
-      DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=swapkino
+      DATABASE_URL: Host=postgres;Port=5432;Database=swapkino;Username=swapkino;Password=${POSTGRES_PASSWORD:-swapkino}
       REDIS_URL: redis-runtime:6379,abortConnect=false
       GORSE_URL: http://gorse-server:8087/
       GORSE_API_KEY: ${GORSE_API_KEY:-local-gorse-api-key}

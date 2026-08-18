@@ -13,6 +13,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      DEPLOY_PATH: /projects/SwapKino
+      DEPLOY_PORT: "18080"
     steps:
       - name: Configure SSH
         shell: bash
@@ -21,6 +24,8 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           set -euo pipefail
+          test -n "$DEPLOY_SSH_KEY" || { echo "DEPLOY_SSH_KEY is not configured" >&2; exit 1; }
+          test -n "$DEPLOY_HOST" || { echo "DEPLOY_HOST is not configured" >&2; exit 1; }
           install -d -m 700 "$HOME/.ssh"
           printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
@@ -33,20 +38,72 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           set -euo pipefail
-          ssh -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
+          test -n "$DEPLOY_USER" || { echo "DEPLOY_USER is not configured" >&2; exit 1; }
+          ssh -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' DEPLOY_PORT='$DEPLOY_PORT' bash -s" <<'REMOTE'
           set -euo pipefail
-          cd /home/vlan/SwapKino
+
+          : "${DEPLOY_PATH:?DEPLOY_PATH is required}"
+          : "${DEPLOY_PORT:?DEPLOY_PORT is required}"
+
+          if [ -e "$DEPLOY_PATH" ] && [ ! -d "$DEPLOY_PATH" ]; then
+            echo "$DEPLOY_PATH exists but is not a directory" >&2
+            exit 1
+          fi
+          install -d -m 755 "$(dirname "$DEPLOY_PATH")"
+
+          if [ ! -d "$DEPLOY_PATH/.git" ]; then
+            if [ -e "$DEPLOY_PATH" ] && [ "$(find "$DEPLOY_PATH" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+              echo "$DEPLOY_PATH is non-empty and is not a SwapKino checkout; refusing to touch it" >&2
+              exit 1
+            fi
+            git clone --branch main --single-branch https://github.com/Vlan3ik/SwapKino.git "$DEPLOY_PATH"
+          fi
+
+          cd "$DEPLOY_PATH"
+          test "$(git config --get remote.origin.url)" = "https://github.com/Vlan3ik/SwapKino.git" || {
+            echo "Unexpected origin in $DEPLOY_PATH; refusing to deploy" >&2
+            exit 1
+          }
+          test -f backend/.env || {
+            echo "backend/.env is missing in $DEPLOY_PATH; provision production secrets before deploying" >&2
+            exit 1
+          }
+          test -f backend/SeleniumService/.env.example || {
+            echo "Selenium configuration is missing in $DEPLOY_PATH" >&2
+            exit 1
+          }
+
+          if [ -f docker/compose.yml ] && docker compose -p swapkino-prod -f docker/compose.yml ps -q postgres 2>/dev/null | grep -q .; then
+            install -d -m 700 backups
+            backup="backups/postgres-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+            docker compose -p swapkino-prod -f docker/compose.yml exec -T postgres pg_dump -U swapkino -d swapkino | gzip > "$backup"
+            chmod 600 "$backup"
+          fi
+
           git fetch origin main
           git checkout main
           git reset --hard origin/main
+          if ! (command -v docker >/dev/null && docker compose version >/dev/null 2>&1); then
+            echo "Docker Compose is required on the deployment host" >&2
+            exit 1
+          fi
+
+          if ss -ltn "sport = :$DEPLOY_PORT" | grep -q . && ! docker ps --format '{{.Ports}}' | grep -q "127.0.0.1:$DEPLOY_PORT->"; then
+            echo "127.0.0.1:$DEPLOY_PORT is already used by another service; refusing to reconfigure it" >&2
+            exit 1
+          fi
+
           docker compose -p swapkino-prod -f docker/compose.yml up -d --build --remove-orphans
           # API/frontend containers are recreated during deploy. Reload nginx so
           # its upstream DNS entries point at the new container IPs instead of
           # returning 502 for the old, removed API container.
           docker compose -p swapkino-prod -f docker/compose.yml restart nginx
           for attempt in $(seq 1 30); do
-            if curl -fsS --max-time 5 http://127.0.0.1:18080/ready >/dev/null; then
-              exit 0
+            if curl -fsS --max-time 5 "http://127.0.0.1:$DEPLOY_PORT/ready" >/dev/null && \
+               curl -fsS --max-time 5 "http://127.0.0.1:$DEPLOY_PORT/health" >/dev/null; then
+              if curl -fsS --max-time 10 -H 'Host: swapkino.itdpy.xyz' "http://127.0.0.1:$DEPLOY_PORT/" >/dev/null; then
+                exit 0
+              fi
             fi
             sleep 2
           done
