@@ -23,8 +23,17 @@ if [[ "$ready_ok" != true ]]; then
   exit 1
 fi
 
-movie_count=$(curl -fsS "$BASE_URL/api/v1/movies?page=1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["results"]))')
-test "$movie_count" -gt 0
+movie_count=0
+for _ in $(seq 1 60); do
+  movie_count=$(curl -fsS "$BASE_URL/api/v1/movies?page=1" 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["results"]))' 2>/dev/null || echo 0)
+  if test "$movie_count" -gt 0; then break; fi
+  sleep 1
+done
+if ! test "$movie_count" -gt 0; then
+  echo "Catalog did not become non-empty: movie_count=$movie_count" >&2
+  "${COMPOSE[@]}" logs --tail=80 api worker >&2 || true
+  exit 1
+fi
 
 selenium_health=$("${COMPOSE[@]}" exec -T selenium-service python -c 'from urllib.request import urlopen; print(urlopen("http://127.0.0.1:8081/health").read().decode())')
 [[ "$selenium_health" == *'"status":"ok"'* ]]
