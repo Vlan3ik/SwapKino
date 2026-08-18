@@ -8,12 +8,20 @@ BASE_URL="${BASE_URL:-http://127.0.0.1:18080}"
 "${COMPOSE[@]}" up -d
 
 ready=""
+ready_ok=false
 for _ in $(seq 1 30); do
   ready=$(curl -fsS "$BASE_URL/ready" 2>/dev/null || true)
-  [[ -n "$ready" ]] && break
+  if [[ -n "$ready" ]] && python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("status") == "ready" else 1)' <<<"$ready" 2>/dev/null; then
+    ready_ok=true
+    break
+  fi
   sleep 1
 done
-[[ "$ready" == *'"status":"ready"'* ]]
+if [[ "$ready_ok" != true ]]; then
+  echo "SwapKino readiness check failed: ${ready:-no response}" >&2
+  "${COMPOSE[@]}" ps >&2
+  exit 1
+fi
 
 movie_count=$(curl -fsS "$BASE_URL/api/v1/movies?page=1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["results"]))')
 test "$movie_count" -gt 0
