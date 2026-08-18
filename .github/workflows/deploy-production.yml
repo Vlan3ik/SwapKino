@@ -49,9 +49,11 @@ jobs:
             echo "$DEPLOY_PATH exists but is not a directory" >&2
             exit 1
           fi
-          install -d -m 755 "$(dirname "$DEPLOY_PATH")"
-
           if [ ! -d "$DEPLOY_PATH/.git" ]; then
+            test -d "$(dirname "$DEPLOY_PATH")" || {
+              echo "Parent directory $(dirname "$DEPLOY_PATH") must be provisioned on the server" >&2
+              exit 1
+            }
             if [ -e "$DEPLOY_PATH" ] && [ "$(find "$DEPLOY_PATH" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
               echo "$DEPLOY_PATH is non-empty and is not a SwapKino checkout; refusing to touch it" >&2
               exit 1
