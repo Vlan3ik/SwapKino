@@ -90,7 +90,7 @@ jobs:
             exit 1
           fi
 
-          if ss -ltn "sport = :$DEPLOY_PORT" | grep -q . && ! docker ps --format '{{.Ports}}' | grep -q "127.0.0.1:$DEPLOY_PORT->"; then
+          if ss -ltnH "sport = :$DEPLOY_PORT" | grep -q . && ! docker ps --format '{{.Ports}}' | grep -q "127.0.0.1:$DEPLOY_PORT->"; then
             echo "127.0.0.1:$DEPLOY_PORT is already used by another service; refusing to reconfigure it" >&2
             exit 1
           fi
