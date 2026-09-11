@@ -90,7 +90,7 @@ export function ProfileSettingsView() {
 
   const avatar = avatarUrl.trim();
   return <><main className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-5">
-    <button type="button" onClick={() => router.push("/profile")} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Вернуться в профиль</button>
+    <button type="button" onClick={() => user && router.push(`/profile/${user.id}`)} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Вернуться в профиль</button>
     <div className="flex items-start gap-4"><div className="rounded-2xl bg-rating/15 p-3 text-rating"><Settings className="h-6 w-6" /></div><div><h1 className="text-2xl sm:text-3xl font-bold">Настройки профиля</h1><p className="mt-1 text-sm text-muted-foreground">Управляй именем, аватаром, паролем и безопасностью аккаунта.</p></div></div>
 
     <section className="glass-panel rounded-3xl p-5 sm:p-7">

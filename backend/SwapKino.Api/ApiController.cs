@@ -184,6 +184,10 @@ public sealed class ApiController(SwapKinoDbContext db, ApiAuthServices auth, Ap
         db.UserActions.RemoveRange(db.UserActions.Where(x => x.UserId == UserId));
         db.UserMovieStates.RemoveRange(db.UserMovieStates.Where(x => x.UserId == UserId));
         db.UserExternalItems.RemoveRange(db.UserExternalItems.Where(x => x.UserId == UserId));
+        db.Follows.RemoveRange(db.Follows.Where(x => x.FollowerId == UserId || x.FollowingId == UserId));
+        db.CommentReactions.RemoveRange(db.CommentReactions.Where(x => x.UserId == UserId));
+        db.MovieComments.RemoveRange(db.MovieComments.Where(x => x.AuthorId == UserId));
+        db.Notifications.RemoveRange(db.Notifications.Where(x => x.RecipientId == UserId || x.ActorId == UserId));
         db.ImportJobs.RemoveRange(db.ImportJobs.Where(x => x.UserId == UserId));
         db.RefreshSessions.RemoveRange(db.RefreshSessions.Where(x => x.UserId == UserId));
         var result = await users.DeleteAsync(user);

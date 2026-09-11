@@ -21,6 +21,9 @@ import { cn } from "@/lib/utils";
 import { RatingControl } from "@/components/common/RatingControl";
 import { ArtworkImage } from "@/components/common/ArtworkImage";
 import { MoviePlayer } from "@/components/movie/MoviePlayer";
+import { MovieSocialPanel } from "@/components/movie/MovieSocialPanel";
+import { MovieComments } from "@/components/movie/MovieComments";
+import { featureFlags } from "@/lib/featureFlags";
 
 export function MovieCardView({
   movieId,
@@ -157,14 +160,14 @@ export function MovieCardView({
                 </p>
               )}
               <div className="mt-5 flex flex-wrap gap-3">
-                <button
+                {featureFlags.vibix && <button
                   type="button"
                   onClick={scrollToPlayer}
                   className="rounded-full bg-white text-black px-5 py-3 text-sm font-bold flex gap-2 transition hover:bg-rating"
                 >
                   <Play className="h-4 w-4 fill-current" />
                   Смотреть
-                </button>
+                </button>}
                 <button
                   type="button"
                   aria-pressed={favorite}
@@ -217,6 +220,7 @@ export function MovieCardView({
           )}
           <RatingControl movieId={movie.id} isSeries={isSeries} />
         </section>
+        <MovieSocialPanel movieId={movie.id} isSeries={isSeries} />
         {movie.trailerYoutubeId && (
           <section>
             <Heading>Трейлер</Heading>
@@ -230,11 +234,11 @@ export function MovieCardView({
             </div>
           </section>
         )}
-        <MoviePlayer
+        {featureFlags.vibix && <MoviePlayer
           movieId={movie.id}
           isSeries={isSeries}
           title={movie.title}
-        />
+        />}
         {(movie.images.length > 0 || movie.posterUrl || movie.backdropUrl) && (
           <section>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -335,6 +339,7 @@ export function MovieCardView({
           </section>
         )}
       </div>
+      <MovieComments movieId={movie.id} isSeries={isSeries} />
     </div>
   );
 }

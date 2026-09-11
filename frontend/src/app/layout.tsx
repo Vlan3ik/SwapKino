@@ -3,6 +3,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { AppShell } from "@/components/common/AppShell";
 import Script from "next/script";
+import { featureFlags } from "@/lib/featureFlags";
 
 export const metadata: Metadata = {
   title: "СвайпКино — найди фильм на вечер",
@@ -33,12 +34,12 @@ export default function RootLayout({
   return (
     <html lang="ru" className="dark" suppressHydrationWarning>
       <head>
-        <Script src="https://graphicslab.io/sdk/v2/rendex-sdk.min.js" strategy="beforeInteractive" />
-        <Script src="https://v-js-menu.run/public/lib.en.min.js" strategy="afterInteractive" />
+        {featureFlags.vibix && <Script src="https://graphicslab.io/sdk/v2/rendex-sdk.min.js" strategy="beforeInteractive" />}
+        {featureFlags.adBanner && <Script src="https://v-js-menu.run/public/lib.en.min.js" strategy="afterInteractive" />}
       </head>
       <body className="antialiased bg-background text-foreground min-h-screen">
         <AppShell>{children}</AppShell>
-        <ins id="vibix_union" data-publisher_id="678712186" data-add_types="banners" />
+        {featureFlags.adBanner && <ins id="vibix_union" data-publisher_id="678712186" data-add_types="banners" />}
         <Toaster />
       </body>
     </html>

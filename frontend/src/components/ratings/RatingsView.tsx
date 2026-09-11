@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Star, Trash2, Play, Clock, ArrowUpDown, Heart, Link2, ArrowRight, Sparkles } from "lucide-react";
 import { contentKey, parseContentKey, useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { featureFlags } from "@/lib/featureFlags";
 import { toast } from "sonner";
 
 type SortKey = "rating-desc" | "rating-asc" | "year-desc" | "year-asc" | "title";
@@ -207,7 +208,7 @@ export function RatingsView() {
 
                       {/* Смотреть + В избранное */}
                       <div className="mt-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {movie.watchUrl && <a
+                        {featureFlags.vibix && movie.watchUrl && <a
                           href={movie.watchUrl}
                           target="_blank"
                           rel="noopener noreferrer"

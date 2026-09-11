@@ -11,7 +11,7 @@ public sealed class AvatarStorage(IMinioClient minio, IConfiguration config, ILo
         ["image/jpeg"] = ".jpg", ["image/png"] = ".png", ["image/webp"] = ".webp", ["image/gif"] = ".gif"
     };
     private string Bucket => config["MINIO_BUCKET"] ?? "swapkino-uploads";
-    private string PublicBase => (config["MINIO_PUBLIC_URL"] ?? "http://localhost:9000").TrimEnd('/');
+    private string PublicBase => (config["MINIO_PUBLIC_URL"] ?? "http://127.0.0.1:19000").TrimEnd('/');
 
     public async Task<string> SaveAsync(Guid userId, IFormFile file, CancellationToken ct)
     {

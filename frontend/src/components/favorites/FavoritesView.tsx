@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { Heart, Star, Clock, Trash2, Play } from "lucide-react";
 import { contentKey, useAppStore } from "@/lib/store";
+import { featureFlags } from "@/lib/featureFlags";
 
 export function FavoritesView() {
   const router = useRouter();
@@ -112,7 +113,7 @@ export function FavoritesView() {
                   </div>
 
                   {/* Смотреть */}
-                  {m.watchUrl && <a
+                  {featureFlags.vibix && m.watchUrl && <a
                     href={m.watchUrl}
                     target="_blank"
                     rel="noopener noreferrer"

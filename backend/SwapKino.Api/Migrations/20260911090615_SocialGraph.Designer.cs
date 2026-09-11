@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SwapKino.Api;
@@ -11,9 +12,11 @@ using SwapKino.Api;
 namespace SwapKino.Api.Migrations
 {
     [DbContext(typeof(SwapKinoDbContext))]
-    partial class SwapKinoDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260911090615_SocialGraph")]
+    partial class SocialGraph
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -467,48 +470,6 @@ namespace SwapKino.Api.Migrations
                     b.HasIndex("TmdbId", "IsSeries", "CreatedAt");
 
                     b.ToTable("MovieComments");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.Notification", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("ActorId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("CommentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool?>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("ReadAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("RecipientId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int?>("TmdbId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ActorId");
-
-                    b.HasIndex("CommentId");
-
-                    b.HasIndex("RecipientId", "ReadAt", "CreatedAt");
-
-                    b.ToTable("Notifications");
                 });
 
             modelBuilder.Entity("SwapKino.Api.OutboxEvent", b =>
@@ -1015,32 +976,6 @@ namespace SwapKino.Api.Migrations
                     b.Navigation("Author");
 
                     b.Navigation("ParentComment");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.Notification", b =>
-                {
-                    b.HasOne("SwapKino.Api.User", "Actor")
-                        .WithMany()
-                        .HasForeignKey("ActorId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("SwapKino.Api.MovieComment", "Comment")
-                        .WithMany()
-                        .HasForeignKey("CommentId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("SwapKino.Api.User", "Recipient")
-                        .WithMany()
-                        .HasForeignKey("RecipientId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Actor");
-
-                    b.Navigation("Comment");
-
-                    b.Navigation("Recipient");
                 });
 
             modelBuilder.Entity("SwapKino.Api.RefreshSession", b =>

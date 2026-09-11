@@ -53,7 +53,7 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio-secret-change-me}
       MINIO_BUCKET: swapkino-uploads
-      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://127.0.0.1:19000}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:3000,http://127.0.0.1,http://127.0.0.1:3000}
       TMDB_ALLOW_FALLBACK: "false"
       SEED_TEST_ADMIN: "true"
@@ -103,6 +103,8 @@ services:
       dockerfile: Dockerfile
       args:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        NEXT_PUBLIC_ENABLE_VIBIX: ${NEXT_PUBLIC_ENABLE_VIBIX:-false}
+        NEXT_PUBLIC_ENABLE_AD_BANNER: ${NEXT_PUBLIC_ENABLE_AD_BANNER:-false}
     expose: ["3000"]
     environment:
       NODE_ENV: production

@@ -10,6 +10,7 @@ import { contentKey, useAppStore } from "@/lib/store";
 import type { Movie } from "@/types";
 import { cn } from "@/lib/utils";
 import { ArtworkImage } from "@/components/common/ArtworkImage";
+import { featureFlags } from "@/lib/featureFlags";
 import {
   Pagination,
   PaginationContent,
@@ -386,13 +387,13 @@ export function CatalogView() {
               }
               onOpen={() => undefined}
             />,
-            index === 9 ? (
+            featureFlags.adBanner && index === 9 ? (
               <VibixBanner
                 key="vibix-banner-desktop"
                 className="hidden lg:flex"
               />
             ) : null,
-            index === 11 ? (
+            featureFlags.adBanner && index === 11 ? (
               <VibixBanner
                 key="vibix-banner-compact"
                 className="flex lg:hidden"

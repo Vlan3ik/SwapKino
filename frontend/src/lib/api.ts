@@ -62,6 +62,84 @@ export interface ApiProfile {
   previews: { favorites: ApiLibraryItem[]; ratings: ApiLibraryItem[] };
 }
 
+export interface PublicUser {
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+}
+
+export interface PublicProfile {
+  user: PublicUser;
+  statistics: { ratingsCount: number; watchedCount: number; averageRating: number; followersCount: number; followingCount: number };
+  relation: "none" | "following" | "follower" | "friends";
+  ratings: ApiLibraryItem[];
+  favorites: ApiLibraryItem[];
+  following: PublicUser[];
+  followers: PublicUser[];
+  comments: PublicProfileComment[];
+  ratingsPage?: PageInfo;
+  favoritesPage?: PageInfo;
+  followingPage?: PageInfo;
+  followersPage?: PageInfo;
+}
+
+export interface PublicProfileComment {
+  id: string;
+  text: string;
+  createdAt: string;
+  tmdbId: number;
+  isSeries: boolean;
+  likes: number;
+  dislikes: number;
+  score: number;
+  movie?: ApiMovie | null;
+}
+
+export interface PageInfo { page: number; pageSize: number; totalCount: number; totalPages: number; hasNextPage: boolean; }
+
+export interface PublicProfileListPage<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  hasNextPage: boolean;
+}
+
+export interface ApiNotification {
+  id: string;
+  type: "comment_liked" | "comment_disliked" | "comment_replied" | "followed";
+  commentId?: string | null;
+  tmdbId?: number | null;
+  isSeries?: boolean | null;
+  readAt?: string | null;
+  createdAt: string;
+  actor: PublicUser;
+}
+
+export interface MovieSocialItem {
+  user: PublicUser;
+  rating?: number | null;
+  watched: boolean;
+  updatedAt: string;
+}
+
+export interface MovieComment {
+  id: string;
+  parentCommentId?: string | null;
+  text: string;
+  createdAt: string;
+  deletedAt?: string | null;
+  authorId: string;
+  author: PublicUser;
+  likes: number;
+  dislikes: number;
+  myReaction?: "like" | "dislike" | null;
+  score?: number;
+  isMine?: boolean;
+  replies?: MovieComment[];
+}
+
 export interface ApiMovie {
   id: number;
   tmdbId: number;
@@ -358,6 +436,13 @@ export const api = {
     }),
   me: () => request<ApiUser>("/auth/me"),
   profile: () => request<ApiProfile>("/profile"),
+  publicProfile: (id: string) => request<PublicProfile>(`/users/${id}`),
+  publicProfileRatings: (id: string, page = 1, pageSize = 10) => request<PublicProfileListPage<ApiLibraryItem>>(`/users/${id}/ratings?page=${page}&pageSize=${pageSize}`),
+  publicProfileFavorites: (id: string, page = 1, pageSize = 10) => request<PublicProfileListPage<ApiLibraryItem>>(`/users/${id}/favorites?page=${page}&pageSize=${pageSize}`),
+  publicProfileFollowers: (id: string, page = 1, pageSize = 10) => request<PublicProfileListPage<PublicUser>>(`/users/${id}/followers?page=${page}&pageSize=${pageSize}`),
+  publicProfileFollowing: (id: string, page = 1, pageSize = 10) => request<PublicProfileListPage<PublicUser>>(`/users/${id}/following?page=${page}&pageSize=${pageSize}`),
+  follow: (id: string) => request<{ relation: PublicProfile["relation"] }>(`/users/${id}/follow`, { method: "POST" }),
+  unfollow: (id: string) => request<{ relation: PublicProfile["relation"] }>(`/users/${id}/follow`, { method: "DELETE" }),
   updateProfile: (payload: { displayName?: string; avatarUrl?: string }) =>
     request<ApiUser>("/profile", {
       method: "PATCH",
@@ -411,6 +496,18 @@ export const api = {
   },
   movie: (id: number, isSeries = false) =>
     request<ApiMovie>(`/movies/${id}${isSeries ? "?isSeries=true" : ""}`),
+  movieSocial: (id: number, isSeries = false) =>
+    request<{ items: MovieSocialItem[] }>(`/movies/${id}/social?isSeries=${isSeries}`),
+  comments: (id: number, isSeries = false, page = 1, focusCommentId?: string | null) =>
+    request<{ items: MovieComment[]; page: number; pageSize: number; totalCount: number; hasNextPage: boolean }>(`/movies/${id}/comments?isSeries=${isSeries}&page=${page}${focusCommentId ? `&focusCommentId=${encodeURIComponent(focusCommentId)}` : ""}`),
+  addComment: (id: number, text: string, parentCommentId?: string | null, isSeries = false) =>
+    request<{ id: string }>(`/movies/${id}/comments?isSeries=${isSeries}`, { method: "POST", body: JSON.stringify({ text, parentCommentId: parentCommentId ?? null }) }),
+  deleteComment: (id: string) => request<void>(`/comments/${id}`, { method: "DELETE" }),
+  reactComment: (id: string, type: "like" | "dislike") => request<{ likes: number; dislikes: number; myReaction?: string | null }>(`/comments/${id}/reaction`, { method: "POST", body: JSON.stringify({ type }) }),
+  removeCommentReaction: (id: string) => request<{ likes: number; dislikes: number; myReaction?: string | null }>(`/comments/${id}/reaction`, { method: "DELETE" }),
+  notifications: (limit = 30) => request<{ items: ApiNotification[]; unreadCount: number }>(`/notifications?limit=${limit}`),
+  markNotificationsRead: () => request<void>("/notifications/read", { method: "POST" }),
+  deleteNotification: (id: string) => request<void>(`/notifications/${id}`, { method: "DELETE" }),
   moviePlayers: (id: number, isSeries = false) =>
     request<ApiMoviePlayersResponse>(
       `/movies/${id}/players${isSeries ? "?isSeries=true" : ""}`,

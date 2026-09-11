@@ -13,6 +13,8 @@ import {
   ChevronRight,
   Settings,
   Shield,
+  Copy,
+  Check,
 } from "lucide-react";
 import { contentKey, parseContentKey, useAppStore } from "@/lib/store";
 import { motion } from "framer-motion";
@@ -23,6 +25,7 @@ export function ProfileView() {
   const { user, movies, favorites, ratings } = useAppStore();
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [profileCopied, setProfileCopied] = useState(false);
 
   const favMovies = movies.filter((m) => favorites.includes(contentKey(m.id, m.type === "series")));
   const ratedEntries = Object.entries(ratings)
@@ -75,6 +78,9 @@ export function ProfileView() {
             </div>
             <button type="button" onClick={() => router.push("/profile/settings")} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm font-semibold transition hover:border-rating/50 hover:bg-rating/10">
               <Settings className="h-4 w-4 text-rating" /> Настройки
+            </button>
+            <button type="button" onClick={() => { void navigator.clipboard.writeText(`${window.location.origin}/profile/${user.id}`); setProfileCopied(true); window.setTimeout(() => setProfileCopied(false), 1800); }} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm font-semibold transition hover:border-rating/50 hover:bg-rating/10">
+              {profileCopied ? <Check className="h-4 w-4 text-rating" /> : <Copy className="h-4 w-4 text-rating" />} {profileCopied ? "Скопировано" : "Поделиться"}
             </button>
             {user.roles.includes("admin") && <button type="button" onClick={() => router.push("/admin")} className="inline-flex items-center gap-2 rounded-xl bg-rating px-4 py-2.5 text-sm font-bold text-black transition hover:bg-rating/80">
               <Shield className="h-4 w-4" /> Админка

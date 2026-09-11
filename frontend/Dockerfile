@@ -9,6 +9,10 @@ RUN npm config set registry "$NPM_REGISTRY" \
     && npm config set fetch-retry-maxtimeout 60000 \
     && npm config set fetch-timeout 120000 \
     && npm install --no-package-lock --prefer-offline --no-audit --no-fund --legacy-peer-deps --ignore-scripts --progress=false
+ARG NEXT_PUBLIC_ENABLE_VIBIX=true
+ARG NEXT_PUBLIC_ENABLE_AD_BANNER=true
+ENV NEXT_PUBLIC_ENABLE_VIBIX=$NEXT_PUBLIC_ENABLE_VIBIX
+ENV NEXT_PUBLIC_ENABLE_AD_BANNER=$NEXT_PUBLIC_ENABLE_AD_BANNER
 COPY . .
 RUN npm run build
 

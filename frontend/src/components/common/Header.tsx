@@ -15,6 +15,7 @@ import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { AuthModal } from "./AuthModal";
 import { BrandMark } from "./BrandMark";
+import { NotificationBell } from "./NotificationBell";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -78,6 +79,8 @@ export function Header() {
 
             {/* Профиль / Авторизация */}
             {user ? (
+              <div className="flex items-center gap-2">
+              <NotificationBell />
               <div
                 className="relative"
                 onMouseEnter={() => setProfileOpen(true)}
@@ -130,7 +133,7 @@ export function Header() {
                         icon={<User className="h-4 w-4" />}
                         label="Профиль"
                         onClick={() => {
-                          router.push("/profile");
+                          router.push(`/profile/${user.id}`);
                           setProfileOpen(false);
                         }}
                       />
@@ -147,7 +150,7 @@ export function Header() {
                     </motion.div>
                   )}
                 </AnimatePresence>
-              </div>
+              </div></div>
             ) : (
               <div className="flex items-center gap-1.5">
                 {/* Иконки быстрых разделов для гостя */}

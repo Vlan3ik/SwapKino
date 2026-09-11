@@ -1,2 +1,2 @@
-import { ProfileView } from "@/components/profile/ProfileView";
-export default function Page() { return <ProfileView />; }
+import { ProfileRedirectView } from "@/components/profile/ProfileRedirectView";
+export default function Page() { return <ProfileRedirectView />; }

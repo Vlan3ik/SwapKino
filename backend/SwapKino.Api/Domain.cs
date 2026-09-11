@@ -111,9 +111,60 @@ public sealed class UserTasteFeature
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
+public sealed class Follow
+{
+    public Guid FollowerId { get; set; }
+    public Guid FollowingId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public User Follower { get; set; } = null!;
+    public User Following { get; set; } = null!;
+}
+
+public sealed class MovieComment
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid AuthorId { get; set; }
+    public int TmdbId { get; set; }
+    public bool IsSeries { get; set; }
+    public Guid? ParentCommentId { get; set; }
+    public string Text { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? DeletedAt { get; set; }
+    public User Author { get; set; } = null!;
+    public MovieComment? ParentComment { get; set; }
+    public ICollection<MovieComment> Replies { get; set; } = [];
+    public ICollection<CommentReaction> Reactions { get; set; } = [];
+}
+
+public sealed class CommentReaction
+{
+    public Guid CommentId { get; set; }
+    public Guid UserId { get; set; }
+    public string Type { get; set; } = "like";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public MovieComment Comment { get; set; } = null!;
+    public User User { get; set; } = null!;
+}
+
+public sealed class Notification
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid RecipientId { get; set; }
+    public Guid ActorId { get; set; }
+    public string Type { get; set; } = "";
+    public Guid? CommentId { get; set; }
+    public int? TmdbId { get; set; }
+    public bool? IsSeries { get; set; }
+    public DateTime? ReadAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public User Recipient { get; set; } = null!;
+    public User Actor { get; set; } = null!;
+    public MovieComment? Comment { get; set; }
+}
+
 public sealed class SwapKinoDbContext(DbContextOptions<SwapKinoDbContext> options) : IdentityDbContext<User, IdentityRole<Guid>, Guid>(options)
 {
-    public DbSet<Movie> Movies => Set<Movie>(); public DbSet<Genre> Genres => Set<Genre>(); public DbSet<MovieGenre> MovieGenres => Set<MovieGenre>(); public DbSet<Keyword> Keywords => Set<Keyword>(); public DbSet<MovieKeyword> MovieKeywords => Set<MovieKeyword>(); public DbSet<MoviePerson> MoviePeople => Set<MoviePerson>(); public DbSet<UserAction> UserActions => Set<UserAction>(); public DbSet<UserMovieState> UserMovieStates => Set<UserMovieState>(); public DbSet<UserExternalItem> UserExternalItems => Set<UserExternalItem>(); public DbSet<RecommendationImpression> RecommendationImpressions => Set<RecommendationImpression>(); public DbSet<MovieThemeMembership> MovieThemeMemberships => Set<MovieThemeMembership>(); public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>(); public DbSet<ImportJob> ImportJobs => Set<ImportJob>(); public DbSet<ImportItem> ImportItems => Set<ImportItem>(); public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>(); public DbSet<CatalogSyncState> CatalogSyncStates => Set<CatalogSyncState>(); public DbSet<Filmstrip> Filmstrips => Set<Filmstrip>(); public DbSet<FilmstripFeature> FilmstripFeatures => Set<FilmstripFeature>(); public DbSet<FilmstripReference> FilmstripReferences => Set<FilmstripReference>(); public DbSet<KeywordAlias> KeywordAliases => Set<KeywordAlias>(); public DbSet<UserTasteFeature> UserTasteFeatures => Set<UserTasteFeature>();
+    public DbSet<Movie> Movies => Set<Movie>(); public DbSet<Genre> Genres => Set<Genre>(); public DbSet<MovieGenre> MovieGenres => Set<MovieGenre>(); public DbSet<Keyword> Keywords => Set<Keyword>(); public DbSet<MovieKeyword> MovieKeywords => Set<MovieKeyword>(); public DbSet<MoviePerson> MoviePeople => Set<MoviePerson>(); public DbSet<UserAction> UserActions => Set<UserAction>(); public DbSet<UserMovieState> UserMovieStates => Set<UserMovieState>(); public DbSet<UserExternalItem> UserExternalItems => Set<UserExternalItem>(); public DbSet<RecommendationImpression> RecommendationImpressions => Set<RecommendationImpression>(); public DbSet<MovieThemeMembership> MovieThemeMemberships => Set<MovieThemeMembership>(); public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>(); public DbSet<ImportJob> ImportJobs => Set<ImportJob>(); public DbSet<ImportItem> ImportItems => Set<ImportItem>(); public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>(); public DbSet<CatalogSyncState> CatalogSyncStates => Set<CatalogSyncState>(); public DbSet<Filmstrip> Filmstrips => Set<Filmstrip>(); public DbSet<FilmstripFeature> FilmstripFeatures => Set<FilmstripFeature>(); public DbSet<FilmstripReference> FilmstripReferences => Set<FilmstripReference>(); public DbSet<KeywordAlias> KeywordAliases => Set<KeywordAlias>(); public DbSet<UserTasteFeature> UserTasteFeatures => Set<UserTasteFeature>(); public DbSet<Follow> Follows => Set<Follow>(); public DbSet<MovieComment> MovieComments => Set<MovieComment>(); public DbSet<CommentReaction> CommentReactions => Set<CommentReaction>(); public DbSet<Notification> Notifications => Set<Notification>();
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -135,6 +186,21 @@ public sealed class SwapKinoDbContext(DbContextOptions<SwapKinoDbContext> option
         b.Entity<KeywordAlias>().HasKey(x => x.TmdbKeywordId);
         b.Entity<UserTasteFeature>().HasKey(x => new { x.UserId, x.FeatureType, x.TmdbFeatureId });
         b.Entity<UserTasteFeature>().HasIndex(x => new { x.UserId, x.Weight });
+        b.Entity<Follow>().HasKey(x => new { x.FollowerId, x.FollowingId });
+        b.Entity<Follow>().HasIndex(x => x.FollowingId);
+        b.Entity<Follow>().HasOne(x => x.Follower).WithMany().HasForeignKey(x => x.FollowerId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<Follow>().HasOne(x => x.Following).WithMany().HasForeignKey(x => x.FollowingId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<MovieComment>().HasIndex(x => new { x.TmdbId, x.IsSeries, x.CreatedAt });
+        b.Entity<MovieComment>().HasIndex(x => x.AuthorId);
+        b.Entity<MovieComment>().HasOne(x => x.Author).WithMany().HasForeignKey(x => x.AuthorId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<MovieComment>().HasOne(x => x.ParentComment).WithMany(x => x.Replies).HasForeignKey(x => x.ParentCommentId).OnDelete(DeleteBehavior.SetNull);
+        b.Entity<CommentReaction>().HasKey(x => new { x.CommentId, x.UserId });
+        b.Entity<CommentReaction>().HasOne(x => x.Comment).WithMany(x => x.Reactions).HasForeignKey(x => x.CommentId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<CommentReaction>().HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<Notification>().HasIndex(x => new { x.RecipientId, x.ReadAt, x.CreatedAt });
+        b.Entity<Notification>().HasOne(x => x.Recipient).WithMany().HasForeignKey(x => x.RecipientId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<Notification>().HasOne(x => x.Actor).WithMany().HasForeignKey(x => x.ActorId).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Notification>().HasOne(x => x.Comment).WithMany().HasForeignKey(x => x.CommentId).OnDelete(DeleteBehavior.SetNull);
     }
 }
 
