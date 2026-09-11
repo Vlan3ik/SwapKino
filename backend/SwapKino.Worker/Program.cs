@@ -37,6 +37,7 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await EnsureConsumerGroup("swapkino-recommendations");
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -87,6 +88,18 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
             }
 
             await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+        }
+    }
+
+    private async Task EnsureConsumerGroup(string group)
+    {
+        try
+        {
+            await Redis.StreamCreateConsumerGroupAsync(Stream, group, "0-0", createStream: true);
+        }
+        catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.LogDebug(ex, "Redis consumer group already exists: {Group}", group);
         }
     }
 
