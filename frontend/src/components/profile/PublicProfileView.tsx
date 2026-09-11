@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, ChevronRight, Copy, Heart, MessageCircle, Settings, Shield, Star, UserPlus, Users } from "lucide-react";
 import { api, mapApiMovie, type ApiLibraryItem, type PublicProfile, type PublicProfileComment, type PublicUser } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { trackEvent } from "@/components/common/PlausibleAnalytics";
 
 function ratingClass(value: number) { return value >= 8 ? "bg-emerald-400 text-black" : value >= 5 ? "bg-amber-300 text-black" : "bg-rose-400 text-black"; }
 
@@ -21,7 +22,7 @@ export function PublicProfileView({ id }: { id: string }) {
   if (error) return <div className="mx-auto max-w-3xl px-4 py-20 text-center"><p>{error}</p><Link href="/" className="mt-4 inline-block text-rating">На главную</Link></div>;
   if (!profile) return <div className="py-24 text-center text-muted-foreground">Загружаем профиль…</div>;
   const isSelf = currentUser?.id === id;
-  const share = async () => { await navigator.clipboard.writeText(`${window.location.origin}/profile/${id}`); setCopied(true); window.setTimeout(() => setCopied(false), 1800); };
+  const share = async () => { await navigator.clipboard.writeText(`${window.location.origin}/profile/${id}`); trackEvent("profile_share"); setCopied(true); window.setTimeout(() => setCopied(false), 1800); };
   const toggleFollow = async () => { if (!currentUser) return; const follows = profile.relation === "following" || profile.relation === "friends"; const response = follows ? await api.unfollow(id) : await api.follow(id); setProfile({ ...profile, relation: response.relation, statistics: { ...profile.statistics, followersCount: profile.statistics.followersCount + (follows ? -1 : 1) } }); };
   return <main className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-6 space-y-7">
     <Link href="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Назад</Link>

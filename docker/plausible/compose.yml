@@ -1,0 +1,59 @@
+name: swapkino-plausible
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: plausible_db
+      POSTGRES_USER: plausible
+      POSTGRES_PASSWORD: ${PLAUSIBLE_POSTGRES_PASSWORD}
+    volumes:
+      - plausible-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plausible -d plausible_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_DB: plausible_events_db
+      CLICKHOUSE_USER: plausible
+      CLICKHOUSE_PASSWORD: ${PLAUSIBLE_CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - plausible-clickhouse-data:/var/lib/clickhouse
+      - plausible-clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  plausible:
+    image: plausible/analytics:latest
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    environment:
+      BASE_URL: ${PLAUSIBLE_BASE_URL:-https://stmstmstmstmstm.ru}
+      SECRET_KEY_BASE: ${PLAUSIBLE_SECRET_KEY_BASE}
+      DATABASE_URL: postgres://plausible:${PLAUSIBLE_POSTGRES_PASSWORD}@postgres:5432/plausible_db
+      CLICKHOUSE_DATABASE_URL: http://plausible:${PLAUSIBLE_CLICKHOUSE_PASSWORD}@clickhouse:8123/plausible_events_db
+      DISABLE_REGISTRATION: "true"
+      ENABLE_USER_REGISTRATION: "false"
+      ADMIN_USER_EMAIL: ${PLAUSIBLE_ADMIN_EMAIL}
+      ADMIN_USER_NAME: ${PLAUSIBLE_ADMIN_NAME:-SwapKino Admin}
+      ADMIN_USER_PWD: ${PLAUSIBLE_ADMIN_PASSWORD}
+      MAILER_ADAPTER: Bamboo.LocalAdapter
+    ports:
+      - "127.0.0.1:18081:8000"
+    restart: unless-stopped
+
+volumes:
+  plausible-postgres-data:
+  plausible-clickhouse-data:
+  plausible-clickhouse-logs:

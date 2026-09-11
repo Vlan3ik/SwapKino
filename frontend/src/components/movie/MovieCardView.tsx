@@ -24,6 +24,7 @@ import { MoviePlayer } from "@/components/movie/MoviePlayer";
 import { MovieSocialPanel } from "@/components/movie/MovieSocialPanel";
 import { MovieComments } from "@/components/movie/MovieComments";
 import { featureFlags } from "@/lib/featureFlags";
+import { trackEvent } from "@/components/common/PlausibleAnalytics";
 
 export function MovieCardView({
   movieId,
@@ -50,6 +51,7 @@ export function MovieCardView({
     setNotFound(false);
     try {
       const details = mapApiMovie(await api.movie(movieId, isSeries));
+      trackEvent("movie_open", { content_type: isSeries ? "series" : "movie" });
       setMovie(details);
       useAppStore.setState((state) => ({
         movies: merge(state.movies, details),

@@ -47,6 +47,17 @@ public sealed class SocialController(SwapKinoDbContext db, ApiExternalServices e
         });
     }
 
+    [HttpGet("users/sitemap")]
+    [AllowAnonymous]
+    public async Task<IActionResult> PublicProfileSitemap([FromQuery] int page = 1, [FromQuery] int pageSize = 500, CancellationToken ct = default)
+    {
+        if (page < 1 || pageSize is < 1 or > 1000) return ValidationProblem("Некорректные параметры страницы");
+        var query = db.Users.AsNoTracking().OrderBy(x => x.Id);
+        var total = await query.CountAsync(ct);
+        var items = await query.Skip((page - 1) * pageSize).Take(pageSize).Select(x => new { id = x.Id, lastModified = x.CreatedAt }).ToListAsync(ct);
+        return Ok(new { items, page, pageSize, totalCount = total, totalPages = (int)Math.Ceiling(total / (double)pageSize), hasNextPage = page * pageSize < total });
+    }
+
     [HttpGet("users/{id:guid}/ratings")]
     [AllowAnonymous]
     public Task<IActionResult> PublicRatings(Guid id, [FromQuery] int page = 1, [FromQuery] int pageSize = PublicPageSize, CancellationToken ct = default) => PublicStateList(id, page, pageSize, favorite: false, ct: ct);

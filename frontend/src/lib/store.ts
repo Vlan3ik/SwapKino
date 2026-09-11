@@ -7,6 +7,7 @@ import {
   setToken,
 } from "@/lib/api";
 import type { Movie } from "@/types";
+import { trackEvent } from "@/components/common/PlausibleAnalytics";
 
 export type View =
   | { name: "feed" }
@@ -449,6 +450,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? [...state.favorites, key]
         : state.favorites.filter((id) => id !== key),
     }));
+    trackEvent(favorite ? "favorite_added" : "favorite_removed", { content_type: isSeries ? "series" : "movie" });
     if (get().token)
       void api
         .action({
@@ -465,6 +467,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const value = Math.max(1, Math.min(10, Math.round(rating)));
     const key = contentKey(movieId, isSeries);
     set((state) => ({ ratings: { ...state.ratings, [key]: value } }));
+    trackEvent("rating_set", { rating: value, content_type: isSeries ? "series" : "movie" });
     if (get().token)
       void api
         .action({
