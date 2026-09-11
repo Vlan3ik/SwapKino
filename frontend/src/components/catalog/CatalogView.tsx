@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Clock, Heart, Search, SlidersHorizontal, Star, X } from "lucide-react";
 import { api, mapApiMovie, moviePageItems } from "@/lib/api";
 import { allGenres } from "@/lib/movies";
-import { useAppStore } from "@/lib/store";
+import { contentKey, useAppStore } from "@/lib/store";
 import type { Movie } from "@/types";
 import { cn } from "@/lib/utils";
 import { ArtworkImage } from "@/components/common/ArtworkImage";
@@ -170,7 +170,7 @@ export function CatalogView() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const toggleFavorite = useAppStore((state) => state.toggleFavorite);
-  const isFavorite = useAppStore((state) => state.isFavorite);
+  const favorites = useAppStore((state) => state.favorites);
   const activeCount =
     genres.length +
     Number(minRating > 0) +
@@ -380,7 +380,7 @@ export function CatalogView() {
             <CatalogCard
               key={`${movie.type}:${movie.id}`}
               movie={movie}
-              favorite={isFavorite(movie.id, movie.type === "series")}
+                favorite={favorites.includes(contentKey(movie.id, movie.type === "series"))}
               onFavorite={() =>
                 toggleFavorite(movie.id, movie.type === "series")
               }

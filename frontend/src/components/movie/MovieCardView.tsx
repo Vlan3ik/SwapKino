@@ -15,7 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { api, mapApiMovie } from "@/lib/api";
-import { useAppStore } from "@/lib/store";
+import { contentKey, useAppStore } from "@/lib/store";
 import type { Movie, Person } from "@/types";
 import { cn } from "@/lib/utils";
 import { RatingControl } from "@/components/common/RatingControl";
@@ -40,7 +40,7 @@ export function MovieCardView({
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const toggleFavorite = useAppStore((state) => state.toggleFavorite);
-  const isFavorite = useAppStore((state) => state.isFavorite);
+  const favorites = useAppStore((state) => state.favorites);
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -80,7 +80,9 @@ export function MovieCardView({
         onBack={() => router.back()}
       />
     );
-  const favorite = isFavorite(movie.id, isSeries);
+  // Subscribe to the actual value, not to the stable `isFavorite` selector
+  // function. This keeps the button in sync with the optimistic store update.
+  const favorite = favorites.includes(contentKey(movie.id, isSeries));
   const scrollToPlayer = () =>
     document
       .getElementById("watch")
@@ -171,12 +173,15 @@ export function MovieCardView({
                     toggleFavorite(movie.id, isSeries);
                   }}
                   className={cn(
-                    "rounded-full border px-5 py-3 text-sm font-bold flex gap-2 transition hover:border-like",
+                    "rounded-full border px-5 py-3 text-sm font-bold flex gap-2 transition-all duration-200 hover:border-like active:scale-95",
                     favorite && "bg-like border-like text-black",
                   )}
                 >
                   <Heart
-                    className="h-4 w-4"
+                    className={cn(
+                      "h-4 w-4 transition-transform duration-200",
+                      favorite && "scale-110 fill-current",
+                    )}
                     fill={favorite ? "currentColor" : "none"}
                   />
                   {favorite ? "В избранном" : "В избранное"}

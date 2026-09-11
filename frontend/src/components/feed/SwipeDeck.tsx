@@ -20,7 +20,7 @@ import {
 } from "framer-motion";
 import { api, getToken, mapApiMovie, mapApiReel } from "@/lib/api";
 import { filmReels, getReelMovies } from "@/lib/movies";
-import { useAppStore } from "@/lib/store";
+import { contentKey, useAppStore } from "@/lib/store";
 import type {
   FeedItem,
   FilmReel,
@@ -57,7 +57,7 @@ export function SwipeDeck({
   const [loading, setLoading] = useState(true);
   const [committing, setCommitting] = useState<"left" | "right" | null>(null);
   const [backdropMovie, setBackdropMovie] = useState<Movie | undefined>();
-  const isFavorite = useAppStore((state) => state.isFavorite);
+  const favorites = useAppStore((state) => state.favorites);
   const current = movies[index];
 
   useEffect(() => {
@@ -318,7 +318,7 @@ export function SwipeDeck({
           <SwipeCard
             key={`${current.type}:${current.id}`}
             movie={current}
-            favorite={isFavorite(current.id, current.type === "series")}
+            favorite={favorites.includes(contentKey(current.id, current.type === "series"))}
             committing={committing}
             onCommit={commit}
           />
