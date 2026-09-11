@@ -14,13 +14,13 @@ API: `http://localhost:8000`, Swagger: `http://localhost:8000/swagger`.
 
 В конфигурации применены следующие контуры:
 
-- `api` — ASP.NET Core API, JWT auth, каталог, рекомендации, библиотека, действия и задания импорта;
+- `api` — ASP.NET Core API, JWT auth, TMDB gateway, product recommendations, library, actions and import jobs;
 - `worker` — .NET Worker, transactional outbox и Redis Streams;
 - PostgreSQL — устойчивое состояние;
 - `redis-runtime` — streams/locks/runtime с `noeviction`;
 - `redis-cache` — кэш с LRU eviction;
-- `gorse-master`, `gorse-server`, `gorse-worker` — offline retrieval/ranking и HTTP gateway;
-- `redis-gorse` и `postgres-gorse` — производные хранилища Gorse;
+- `ProductRecommendationService` — локальный candidate mixing, scoring и diversity reranking;
+- TMDB — единственный каталог; Redis хранит только runtime streams, кэш карточек и recommendation decks;
 - `minio` — объектное хранилище для будущих диагностических артефактов;
 - `selenium-service` — изолированный Kinopoisk scraper.
 

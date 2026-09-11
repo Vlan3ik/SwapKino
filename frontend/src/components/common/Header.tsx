@@ -26,7 +26,7 @@ export function Header() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
 
-  const activeName = pathname === "/" || pathname.startsWith("/reels/") ? "feed" : pathname.split("/")[1];
+  const activeName = pathname === "/" || pathname.startsWith("/filmstrips/") || pathname.startsWith("/reels/") ? "feed" : pathname.split("/")[1];
   const ratedCount = Object.keys(ratings).length;
 
   const openAuth = (mode: "login" | "register") => {
@@ -83,7 +83,7 @@ export function Header() {
                 onMouseEnter={() => setProfileOpen(true)}
                 onMouseLeave={() => setProfileOpen(false)}
               >
-                <button
+                <button type="button"
                   onClick={() => setProfileOpen((v) => !v)}
                   className={cn(
                     "flex items-center gap-2 rounded-full pl-1.5 pr-3 py-1.5 transition-all",
@@ -151,7 +151,7 @@ export function Header() {
             ) : (
               <div className="flex items-center gap-1.5">
                 {/* Иконки быстрых разделов для гостя */}
-                <button
+                <button type="button"
                   onClick={() => router.push("/favorites")}
                   aria-label="Избранное"
                   className={cn(
@@ -168,7 +168,7 @@ export function Header() {
                     </span>
                   )}
                 </button>
-                <button
+                <button type="button"
                   onClick={() => router.push("/ratings")}
                   aria-label="Мои оценки"
                   className={cn(
@@ -185,13 +185,13 @@ export function Header() {
                     </span>
                   )}
                 </button>
-                <button
+                <button type="button"
                   onClick={() => openAuth("login")}
                   className="hidden sm:block text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-3 py-2"
                 >
                   Войти
                 </button>
-                <button
+                <button type="button"
                   onClick={() => openAuth("register")}
                   className="px-4 py-2 rounded-full bg-white text-black text-sm font-semibold hover:bg-rating transition-colors"
                 >
@@ -275,7 +275,7 @@ function DropdownItem({
   onClick: () => void;
 }) {
   return (
-    <button
+    <button type="button"
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",

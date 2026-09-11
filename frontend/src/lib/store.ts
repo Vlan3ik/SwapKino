@@ -1,5 +1,11 @@
 import { create } from "zustand";
-import { api, getToken, mapApiMovie, moviePageItems, setToken } from "@/lib/api";
+import {
+  api,
+  getToken,
+  mapApiMovie,
+  moviePageItems,
+  setToken,
+} from "@/lib/api";
 import type { Movie } from "@/types";
 
 export type View =
@@ -21,34 +27,63 @@ export interface User {
   avatarUrl?: string | null;
   email: string;
   createdAt: number;
+  roles: string[];
 }
 
 export function viewPath(view: View): string {
   switch (view.name) {
-    case "feed": return "/";
-    case "catalog": return "/catalog";
-    case "favorites": return "/favorites";
-    case "ratings": return "/ratings";
-    case "profile": return "/profile";
-    case "license": return "/license";
-    case "privacy": return "/privacy";
-    case "terms": return "/terms";
-    case "copyright": return "/copyright";
-    case "about": return "/about";
-    case "movie": return `/movie/${view.movieId}${view.isSeries ? "?series=1" : ""}`;
+    case "feed":
+      return "/";
+    case "catalog":
+      return "/catalog";
+    case "favorites":
+      return "/favorites";
+    case "ratings":
+      return "/ratings";
+    case "profile":
+      return "/profile";
+    case "license":
+      return "/license";
+    case "privacy":
+      return "/privacy";
+    case "terms":
+      return "/terms";
+    case "copyright":
+      return "/copyright";
+    case "about":
+      return "/about";
+    case "movie":
+      return `/movie/${view.movieId}${view.isSeries ? "?series=1" : ""}`;
   }
 }
 
 export function viewFromLocation(): View {
   if (typeof window === "undefined") return { name: "feed" };
-  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  let path = window.location.pathname;
+  while (path.endsWith("/")) path = path.slice(0, -1);
+  path ||= "/";
   const movieMatch = path.match(/^\/movie\/(\d+)$/);
-  if (movieMatch) return { name: "movie", movieId: Number(movieMatch[1]), isSeries: new URLSearchParams(window.location.search).get("series") === "1" };
+  if (movieMatch)
+    return {
+      name: "movie",
+      movieId: Number(movieMatch[1]),
+      isSeries:
+        new URLSearchParams(window.location.search).get("series") === "1",
+    };
   const names: Record<string, View["name"]> = {
-    "/catalog": "catalog", "/favorites": "favorites", "/ratings": "ratings",
-    "/profile": "profile", "/license": "license", "/privacy": "privacy", "/terms": "terms", "/copyright": "copyright", "/about": "about",
+    "/catalog": "catalog",
+    "/favorites": "favorites",
+    "/ratings": "ratings",
+    "/profile": "profile",
+    "/license": "license",
+    "/privacy": "privacy",
+    "/terms": "terms",
+    "/copyright": "copyright",
+    "/about": "about",
   };
-  return names[path] ? { name: names[path] as Exclude<View["name"], "movie"> } : { name: "feed" };
+  return names[path]
+    ? { name: names[path] as Exclude<View["name"], "movie"> }
+    : { name: "feed" };
 }
 
 interface AppState {
@@ -86,15 +121,43 @@ interface AppState {
   removeRating: (movieId: number, isSeries?: boolean) => void;
   getRating: (movieId: number, isSeries?: boolean) => number | null;
   setActiveReel: (reelId: string | null) => void;
-  register: (data: { username: string; email: string; password: string; privacyConsent: boolean }) => Promise<{ ok: true } | { ok: false; error: string }>;
+  register: (data: {
+    username: string;
+    email: string;
+    password: string;
+    privacyConsent: boolean;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
   deleteAccount: () => Promise<{ ok: true } | { ok: false; error: string }>;
-  updateUserProfile: (user: { id: string; email: string; displayName?: string | null; avatarUrl?: string | null; createdAt?: string | null }) => void;
-  login: (identifier: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  updateUserProfile: (user: {
+    id: string;
+    email: string;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+    createdAt?: string | null;
+    roles?: string[];
+  }) => void;
+  login: (
+    identifier: string,
+    password: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   logout: () => void;
 }
 
-function userFromApi(user: { id: string; email: string; displayName?: string | null; createdAt?: string | null }): User {
-  return { id: user.id, email: user.email, username: user.displayName || user.email, avatarUrl: (user as { avatarUrl?: string | null }).avatarUrl, createdAt: user.createdAt ? Date.parse(user.createdAt) : Date.now() };
+function userFromApi(user: {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  createdAt?: string | null;
+  roles?: string[];
+}): User {
+  return {
+    id: user.id,
+    email: user.email,
+    username: user.displayName || user.email,
+    avatarUrl: (user as { avatarUrl?: string | null }).avatarUrl,
+    createdAt: user.createdAt ? Date.parse(user.createdAt) : Date.now(),
+    roles: user.roles ?? [],
+  };
 }
 
 export function contentKey(movieId: number, isSeries = false) {
@@ -107,10 +170,13 @@ export function parseContentKey(key: string) {
 }
 
 function actionKey(action: string, movieId: number, isSeries = false) {
-  return `${action}:${contentKey(movieId, isSeries)}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  return `${action}:${contentKey(movieId, isSeries)}:${Date.now()}:${globalThis.crypto.randomUUID()}`;
 }
 
-async function syncLibrary(set: (partial: Partial<AppState>) => void, currentMovies: Movie[]) {
+async function syncLibrary(
+  set: (partial: Partial<AppState>) => void,
+  currentMovies: Movie[],
+) {
   const library = await api.library();
   const libraryMovies = library.items
     .map((item) => item.movie)
@@ -118,12 +184,33 @@ async function syncLibrary(set: (partial: Partial<AppState>) => void, currentMov
     .map(mapApiMovie);
   set({
     movies: (() => {
-      const merged = new Map(currentMovies.map((movie) => [contentKey(movie.id, movie.type === "series"), movie]));
-      for (const movie of libraryMovies) merged.set(contentKey(movie.id, movie.type === "series"), movie);
+      const merged = new Map(
+        currentMovies.map((movie) => [
+          contentKey(movie.id, movie.type === "series"),
+          movie,
+        ]),
+      );
+      for (const movie of libraryMovies)
+        merged.set(contentKey(movie.id, movie.type === "series"), movie);
       return [...merged.values()];
     })(),
-    favorites: library.items.filter((item) => item.favorite ?? item.action === "favorite").map((item) => contentKey(item.tmdbId, item.isSeries)),
-    ratings: Object.fromEntries(library.items.filter((item) => (item.rating ?? item.value) != null && (!item.action || item.action === "rate" || item.action === "rating")).map((item) => [contentKey(item.tmdbId, item.isSeries), (item.rating ?? item.value) as number])),
+    favorites: library.items
+      .filter((item) => item.favorite ?? item.action === "favorite")
+      .map((item) => contentKey(item.tmdbId, item.isSeries)),
+    ratings: Object.fromEntries(
+      library.items
+        .filter(
+          (item) =>
+            (item.rating ?? item.value) != null &&
+            (!item.action ||
+              item.action === "rate" ||
+              item.action === "rating"),
+        )
+        .map((item) => [
+          contentKey(item.tmdbId, item.isSeries),
+          (item.rating ?? item.value) as number,
+        ]),
+    ),
   });
 }
 
@@ -150,22 +237,41 @@ export const useAppStore = create<AppState>((set, get) => ({
   hydrated: false,
 
   setView: (view) => {
-    if (typeof window !== "undefined") window.history.pushState({}, "", viewPath(view));
-    set((state) => ({ view, history: [...state.history, state.view].slice(-20), activeReelId: null }));
+    if (typeof window !== "undefined")
+      window.history.pushState({}, "", viewPath(view));
+    set((state) => ({
+      view,
+      history: [...state.history, state.view].slice(-20),
+      activeReelId: null,
+    }));
   },
   goBack: () => {
-    if (typeof window !== "undefined" && window.history.length > 1) window.history.back();
+    if (typeof window !== "undefined" && window.history.length > 1)
+      window.history.back();
     else get().setView({ name: "feed" });
   },
   openMovie: (movieId, isSeries = false) => {
     const view = { name: "movie", movieId, isSeries } as const;
-    if (typeof window !== "undefined") window.history.pushState({}, "", viewPath(view));
-    set((state) => ({ view, history: [...state.history, state.view].slice(-20), activeReelId: null }));
+    if (typeof window !== "undefined")
+      window.history.pushState({}, "", viewPath(view));
+    set((state) => ({
+      view,
+      history: [...state.history, state.view].slice(-20),
+      activeReelId: null,
+    }));
   },
   loadMovie: async (movieId, isSeries = false) => {
     const movie = mapApiMovie(await api.movie(movieId, isSeries));
     const key = contentKey(movie.id, movie.type === "series");
-    set((state) => ({ movies: state.movies.some((item) => contentKey(item.id, item.type === "series") === key) ? state.movies.map((item) => contentKey(item.id, item.type === "series") === key ? movie : item) : [...state.movies, movie] }));
+    set((state) => ({
+      movies: state.movies.some(
+        (item) => contentKey(item.id, item.type === "series") === key,
+      )
+        ? state.movies.map((item) =>
+            contentKey(item.id, item.type === "series") === key ? movie : item,
+          )
+        : [...state.movies, movie],
+    }));
   },
   syncViewFromUrl: () => set({ view: viewFromLocation(), activeReelId: null }),
 
@@ -175,8 +281,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       const response = await api.movies({ q: query, limit: 20 });
       const responseItems = moviePageItems(response);
       const rows = responseItems.map(mapApiMovie);
-      const unique = [...new Map(rows.map((movie) => [contentKey(movie.id, movie.type === "series"), movie])).values()];
-      set({ movies: unique, catalogPage: 1, catalogTotalPages: response.totalPages ?? 1, catalogTotalCount: response.totalCount, catalogHasMore: Boolean(response.nextCursor), catalogNextCursor: response.nextCursor ?? null });
+      const unique = [
+        ...new Map(
+          rows.map((movie) => [
+            contentKey(movie.id, movie.type === "series"),
+            movie,
+          ]),
+        ).values(),
+      ];
+      set({
+        movies: unique,
+        catalogPage: 1,
+        catalogTotalPages: response.totalPages ?? 1,
+        catalogTotalCount: response.totalCount,
+        catalogHasMore: Boolean(response.nextCursor),
+        catalogNextCursor: response.nextCursor ?? null,
+      });
 
       // Первую карточку показываем сразу, а ещё две страницы спокойно
       // догружаем после отрисовки. Это не блокирует первый экран и сохраняет
@@ -191,7 +311,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         }, 180);
       }
     } catch (error) {
-      set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить фильмы" });
+      set({
+        catalogError:
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить фильмы",
+      });
       throw error;
     } finally {
       set({ loadingMovies: false });
@@ -201,7 +326,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadCatalogPage: async (page, query) => {
     set({ loadingMovies: true, catalogError: null });
     try {
-      const targetPage = Math.min(MAX_RESTORE_PAGES, Math.max(1, Math.floor(page)));
+      const targetPage = Math.min(
+        MAX_RESTORE_PAGES,
+        Math.max(1, Math.floor(page)),
+      );
       let cursor: string | null = null;
       let totalCount = 0;
       let totalPages = 1;
@@ -216,10 +344,29 @@ export const useAppStore = create<AppState>((set, get) => ({
         loadedPage = currentPage;
         if (!cursor) break;
       }
-      const unique = [...new Map(rows.map((movie) => [contentKey(movie.id, movie.type === "series"), movie])).values()];
-      set({ movies: unique, catalogPage: loadedPage, catalogTotalPages: totalPages, catalogTotalCount: totalCount, catalogHasMore: Boolean(cursor), catalogNextCursor: cursor });
+      const unique = [
+        ...new Map(
+          rows.map((movie) => [
+            contentKey(movie.id, movie.type === "series"),
+            movie,
+          ]),
+        ).values(),
+      ];
+      set({
+        movies: unique,
+        catalogPage: loadedPage,
+        catalogTotalPages: totalPages,
+        catalogTotalCount: totalCount,
+        catalogHasMore: Boolean(cursor),
+        catalogNextCursor: cursor,
+      });
     } catch (error) {
-      set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить страницу каталога" });
+      set({
+        catalogError:
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить страницу каталога",
+      });
     } finally {
       set({ loadingMovies: false });
     }
@@ -235,8 +382,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const response = await api.movies({ cursor, q: query, limit: 20 });
       const incoming = moviePageItems(response).map(mapApiMovie);
-      const known = new Set(get().movies.map((movie) => contentKey(movie.id, movie.type === "series")));
-      const unique = incoming.filter((movie) => !known.has(contentKey(movie.id, movie.type === "series")));
+      const known = new Set(
+        get().movies.map((movie) =>
+          contentKey(movie.id, movie.type === "series"),
+        ),
+      );
+      const unique = incoming.filter(
+        (movie) => !known.has(contentKey(movie.id, movie.type === "series")),
+      );
       set({
         movies: [...get().movies, ...unique],
         catalogPage: page,
@@ -245,7 +398,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       return unique.length > 0;
     } catch (error) {
-      set({ catalogError: error instanceof Error ? error.message : "Не удалось загрузить следующую партию" });
+      set({
+        catalogError:
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить следующую партию",
+      });
       return false;
     } finally {
       set({ loadingMoreMovies: false });
@@ -266,7 +424,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Сначала загружаем каталог, затем добавляем в него все карточки из
       // библиотеки пользователя. Иначе loadMovies перезаписывал импортированные
       // фильмы и на экране оставались только случайные совпадения с каталогом.
-      await get().loadMovies().catch(() => undefined);
+      await get()
+        .loadMovies()
+        .catch(() => undefined);
       await syncLibrary(set, get().movies);
     } catch {
       setToken(null);
@@ -284,32 +444,80 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleFavorite: (movieId, isSeries = false) => {
     const key = contentKey(movieId, isSeries);
     const favorite = !get().favorites.includes(key);
-    set((state) => ({ favorites: favorite ? [...state.favorites, key] : state.favorites.filter((id) => id !== key) }));
-    if (get().token) void api.action({ tmdbId: movieId, isSeries, actionType: favorite ? "favorite" : "unfavorite", idempotencyKey: actionKey("favorite", movieId, isSeries) }).catch(() => undefined);
+    set((state) => ({
+      favorites: favorite
+        ? [...state.favorites, key]
+        : state.favorites.filter((id) => id !== key),
+    }));
+    if (get().token)
+      void api
+        .action({
+          tmdbId: movieId,
+          isSeries,
+          actionType: favorite ? "favorite" : "unfavorite",
+          idempotencyKey: actionKey("favorite", movieId, isSeries),
+        })
+        .catch(() => undefined);
   },
-  isFavorite: (movieId, isSeries = false) => get().favorites.includes(contentKey(movieId, isSeries)),
+  isFavorite: (movieId, isSeries = false) =>
+    get().favorites.includes(contentKey(movieId, isSeries)),
   setRating: (movieId, rating, isSeries = false) => {
     const value = Math.max(1, Math.min(10, Math.round(rating)));
     const key = contentKey(movieId, isSeries);
     set((state) => ({ ratings: { ...state.ratings, [key]: value } }));
-    if (get().token) void api.action({ tmdbId: movieId, isSeries, actionType: "rate", value, idempotencyKey: actionKey("rate", movieId, isSeries) }).catch(() => undefined);
+    if (get().token)
+      void api
+        .action({
+          tmdbId: movieId,
+          isSeries,
+          actionType: "rate",
+          value,
+          idempotencyKey: actionKey("rate", movieId, isSeries),
+        })
+        .catch(() => undefined);
   },
   removeRating: (movieId, isSeries = false) => {
     const key = contentKey(movieId, isSeries);
-    set((state) => { const next = { ...state.ratings }; delete next[key]; return { ratings: next }; });
-    if (get().token) void api.action({ tmdbId: movieId, isSeries, actionType: "unrate", idempotencyKey: actionKey("unrate", movieId, isSeries) }).catch(() => undefined);
+    set((state) => {
+      const next = { ...state.ratings };
+      delete next[key];
+      return { ratings: next };
+    });
+    if (get().token)
+      void api
+        .action({
+          tmdbId: movieId,
+          isSeries,
+          actionType: "unrate",
+          idempotencyKey: actionKey("unrate", movieId, isSeries),
+        })
+        .catch(() => undefined);
   },
-  getRating: (movieId, isSeries = false) => get().ratings[contentKey(movieId, isSeries)] ?? null,
+  getRating: (movieId, isSeries = false) =>
+    get().ratings[contentKey(movieId, isSeries)] ?? null,
   setActiveReel: (reelId) => set({ activeReelId: reelId }),
 
   register: async ({ username, email, password, privacyConsent }) => {
     try {
-      const response = await api.register({ email: email.trim().toLowerCase(), password, displayName: username.trim(), privacyConsent });
+      const response = await api.register({
+        email: email.trim().toLowerCase(),
+        password,
+        displayName: username.trim(),
+        privacyConsent,
+      });
       setToken(response.accessToken);
       set({ token: response.accessToken, user: userFromApi(response.user) });
       await get().loadMovies();
       return { ok: true };
-    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Не удалось зарегистрироваться" }; }
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Не удалось зарегистрироваться",
+      };
+    }
   },
   login: async (identifier, password) => {
     try {
@@ -319,16 +527,38 @@ export const useAppStore = create<AppState>((set, get) => ({
       await get().loadMovies();
       await syncLibrary(set, get().movies);
       return { ok: true };
-    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Не удалось войти" }; }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Не удалось войти",
+      };
+    }
   },
-  logout: () => { void api.logout().catch(() => undefined); setToken(null); set({ user: null, token: null, favorites: [], ratings: {} }); void get().loadMovies(); },
+  logout: () => {
+    void api.logout().catch(() => undefined);
+    setToken(null);
+    set({ user: null, token: null, favorites: [], ratings: {} });
+    void get().loadMovies();
+  },
   deleteAccount: async () => {
     try {
       await api.deleteAccount();
       setToken(null);
       set({ user: null, token: null, favorites: [], ratings: {} });
       return { ok: true };
-    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Не удалось удалить аккаунт" }; }
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error ? error.message : "Не удалось удалить аккаунт",
+      };
+    }
   },
-  updateUserProfile: (user) => set({ user: userFromApi(user) }),
+  updateUserProfile: (user) =>
+    set((state) => ({
+      user: {
+        ...userFromApi(user),
+        roles: user.roles ?? state.user?.roles ?? [],
+      },
+    })),
 }));

@@ -69,7 +69,7 @@ export function RangeSlider({
       const stepped = Math.round(raw / step) * step;
       return Math.max(min, Math.min(max, stepped));
     },
-    [min, max, range, step, containerWidth]
+    [min, max, range, step, containerWidth],
   );
 
   const updateValue = useCallback(
@@ -83,7 +83,7 @@ export function RangeSlider({
         if (next !== hi) onChange([lo, next]);
       }
     },
-    [lo, hi, step, onChange, pxToValue]
+    [lo, hi, step, onChange, pxToValue],
   );
 
   // Pointer events на самом треке — клик двигает ближайший ползунок
@@ -119,7 +119,7 @@ export function RangeSlider({
   // Клавиатура
   const handleKeyDown = (thumb: Thumb, e: React.KeyboardEvent) => {
     const cur = thumb === "lo" ? lo : hi;
-    let next = cur;
+    let next: number;
     switch (e.key) {
       case "ArrowLeft":
       case "ArrowDown":
@@ -149,10 +149,7 @@ export function RangeSlider({
   };
 
   return (
-    <div
-      className="relative w-full select-none touch-none"
-      style={{ height }}
-    >
+    <div className="relative w-full select-none touch-none" style={{ height }}>
       {/* Трек — кликабельная зона */}
       <div
         ref={trackRef}
@@ -258,6 +255,9 @@ function ThumbButton({
   ariaValueMin: number;
   ariaValueMax: number;
 }) {
+  let boxShadow = "0 2px 8px rgba(0,0,0,0.4)";
+  if (isHovered) boxShadow = `0 0 0 4px ${accent}20, 0 2px 8px rgba(0,0,0,0.4)`;
+  if (isActive) boxShadow = `0 0 0 6px ${accent}30, 0 4px 14px rgba(0,0,0,0.5)`;
   return (
     <div
       role="slider"
@@ -279,11 +279,7 @@ function ThumbButton({
         borderRadius: "9999px",
         background: "white",
         border: `2px solid ${accent}`,
-        boxShadow: isActive
-          ? `0 0 0 6px ${accent}30, 0 4px 14px rgba(0,0,0,0.5)`
-          : isHovered
-          ? `0 0 0 4px ${accent}20, 0 2px 8px rgba(0,0,0,0.4)`
-          : "0 2px 8px rgba(0,0,0,0.4)",
+        boxShadow,
         transition: isActive
           ? "none"
           : "box-shadow 0.15s ease, transform 0.15s ease",

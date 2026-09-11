@@ -14,9 +14,7 @@ interface MoviePlayerProps {
   onAvailabilityChange?: (availability: Availability) => void;
 }
 
-const PROVIDERS = [
-  { key: "vibix", label: "Vibix" },
-] as const;
+const PROVIDERS = [{ key: "vibix", label: "Vibix" }] as const;
 
 function providerKey(value: string) {
   return value.toLocaleLowerCase().replace(/[^a-zа-яё0-9]/g, "");
@@ -33,11 +31,18 @@ function safeEmbedUrl(value: string | null): string | null {
   }
 }
 
-export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: MoviePlayerProps) {
+export function MoviePlayer({
+  movieId,
+  isSeries,
+  title,
+  onAvailabilityChange,
+}: MoviePlayerProps) {
   const [players, setPlayers] = useState<ApiMoviePlayer[]>([]);
   const [availability, setAvailability] = useState<Availability>("loading");
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
-  const [frameState, setFrameState] = useState<"loading" | "ready" | "error">("loading");
+  const [frameState, setFrameState] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
   const [slow, setSlow] = useState(false);
   const [frameAttempt, setFrameAttempt] = useState(0);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -51,8 +56,13 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
       const items = Array.isArray(response.items) ? response.items : [];
       setPlayers(items);
       const first = PROVIDERS.find((provider) => {
-        const item = items.find((row) => providerKey(row.provider) === provider.key);
-        return item?.available && (Boolean(item.embed) || Boolean(safeEmbedUrl(item.embedUrl)));
+        const item = items.find(
+          (row) => providerKey(row.provider) === provider.key,
+        );
+        return (
+          item?.available &&
+          (Boolean(item.embed) || Boolean(safeEmbedUrl(item.embedUrl)))
+        );
       });
       setActiveProvider(first?.key ?? null);
       setAvailability(first ? "available" : "unavailable");
@@ -61,15 +71,33 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
     }
   }, [movieId, isSeries]);
 
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => { onAvailabilityChange?.(availability); }, [availability, onAvailabilityChange]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  useEffect(() => {
+    onAvailabilityChange?.(availability);
+  }, [availability, onAvailabilityChange]);
 
-  const sources = useMemo(() => PROVIDERS.map((provider) => {
-    const item = players.find((row) => providerKey(row.provider) === provider.key);
-    const embedUrl = safeEmbedUrl(item?.embedUrl ?? null);
-    return { ...provider, embedUrl, embed: item?.embed ?? null, available: Boolean(item?.available && (item.embed || embedUrl)) };
-  }), [players]);
-  const active = sources.find((source) => source.key === activeProvider && source.available) ?? null;
+  const sources = useMemo(
+    () =>
+      PROVIDERS.map((provider) => {
+        const item = players.find(
+          (row) => providerKey(row.provider) === provider.key,
+        );
+        const embedUrl = safeEmbedUrl(item?.embedUrl ?? null);
+        return {
+          ...provider,
+          embedUrl,
+          embed: item?.embed ?? null,
+          available: Boolean(item?.available && (item.embed || embedUrl)),
+        };
+      }),
+    [players],
+  );
+  const active =
+    sources.find(
+      (source) => source.key === activeProvider && source.available,
+    ) ?? null;
 
   useEffect(() => {
     if (!active) return;
@@ -100,17 +128,31 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
   };
 
   return (
-    <section id="watch" tabIndex={-1} aria-labelledby="watch-title" className="scroll-mt-20 outline-none">
-      <h2 id="watch-title" className="mb-3 flex items-center gap-2 text-xl font-bold">
+    <section
+      id="watch"
+      tabIndex={-1}
+      aria-labelledby="watch-title"
+      className="scroll-mt-20 outline-none"
+    >
+      <h2
+        id="watch-title"
+        className="mb-3 flex items-center gap-2 text-xl font-bold"
+      >
         <span className="w-1 self-stretch rounded-full bg-rating" />
         <Play className="h-5 w-5 fill-current" /> Смотреть
       </h2>
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-black shadow-cinematic">
-        <div role="tablist" aria-label="Источник видео" className="grid grid-cols-1 gap-px border-b border-white/10 bg-white/10 p-px">
+        <div
+          role="tablist"
+          aria-label="Источник видео"
+          className="grid grid-cols-1 gap-px border-b border-white/10 bg-white/10 p-px"
+        >
           {sources.map((source) => (
             <button
               key={source.key}
-              ref={(node) => { tabRefs.current[source.key] = node; }}
+              ref={(node) => {
+                tabRefs.current[source.key] = node;
+              }}
               type="button"
               role="tab"
               id={`player-tab-${source.key}`}
@@ -118,7 +160,12 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
               aria-selected={source.key === activeProvider}
               aria-disabled={!source.available}
               disabled={!source.available}
-              tabIndex={source.key === activeProvider || (!activeProvider && source.available) ? 0 : -1}
+              tabIndex={
+                source.key === activeProvider ||
+                (!activeProvider && source.available)
+                  ? 0
+                  : -1
+              }
               onClick={() => select(source.key)}
               onKeyDown={(event) => {
                 if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
@@ -127,19 +174,30 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
                 } else if (event.key === "Home" || event.key === "End") {
                   event.preventDefault();
                   const enabled = sources.filter((row) => row.available);
-                  const target = event.key === "Home" ? enabled[0] : enabled.at(-1);
-                  if (target) { select(target.key); tabRefs.current[target.key]?.focus(); }
+                  const target =
+                    event.key === "Home" ? enabled[0] : enabled.at(-1);
+                  if (target) {
+                    select(target.key);
+                    tabRefs.current[target.key]?.focus();
+                  }
                 }
               }}
               className={cn(
                 "min-h-12 bg-background/95 px-3 py-2 text-sm font-semibold transition-colors focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-rating",
                 source.key === activeProvider && "bg-white text-black",
-                !source.available && "cursor-not-allowed text-muted-foreground opacity-45",
-                source.available && source.key !== activeProvider && "hover:bg-white/10",
+                !source.available &&
+                  "cursor-not-allowed text-muted-foreground opacity-45",
+                source.available &&
+                  source.key !== activeProvider &&
+                  "hover:bg-white/10",
               )}
             >
               {source.label}
-              {!source.available && availability !== "loading" && <span className="ml-1 hidden text-[10px] font-normal sm:inline">нет</span>}
+              {!source.available && availability !== "loading" && (
+                <span className="ml-1 hidden text-[10px] font-normal sm:inline">
+                  нет
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -150,25 +208,64 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
           aria-labelledby={active ? `player-tab-${active.key}` : undefined}
           className="relative aspect-video w-full bg-black"
         >
-          {availability === "loading" && <PlayerMessage icon={<LoaderCircle className="h-7 w-7 animate-spin" />} title="Ищем доступные источники…" />}
-          {availability === "error" && <PlayerMessage icon={<TriangleAlert className="h-7 w-7 text-skip" />} title="Не удалось загрузить источники" text="Проверьте соединение и попробуйте ещё раз." action={<Retry onClick={() => void load()} />} />}
-          {availability === "unavailable" && <PlayerMessage icon={<Play className="h-7 w-7" />} title="Просмотр пока недоступен" text="Для этого фильма нет доступных источников." />}
+          {availability === "loading" && (
+            <PlayerMessage
+              icon={<LoaderCircle className="h-7 w-7 animate-spin" />}
+              title="Ищем доступные источники…"
+            />
+          )}
+          {availability === "error" && (
+            <PlayerMessage
+              icon={<TriangleAlert className="h-7 w-7 text-skip" />}
+              title="Не удалось загрузить источники"
+              text="Проверьте соединение и попробуйте ещё раз."
+              action={<Retry onClick={() => void load()} />}
+            />
+          )}
+          {availability === "unavailable" && (
+            <PlayerMessage
+              icon={<Play className="h-7 w-7" />}
+              title="Просмотр пока недоступен"
+              text="Для этого фильма нет доступных источников."
+            />
+          )}
           {(active?.embedUrl || active?.embed) && (
             <>
-              {frameState !== "ready" && frameState !== "error" && <PlayerMessage icon={<LoaderCircle className="h-7 w-7 animate-spin" />} title={slow ? "Плеер загружается дольше обычного" : "Загружаем плеер…"} text={slow ? "Можно подождать или загрузить его ещё раз." : undefined} action={slow ? <Retry onClick={() => setFrameAttempt((value) => value + 1)} /> : undefined} />}
-              {frameState === "error" && <PlayerMessage icon={<TriangleAlert className="h-7 w-7 text-skip" />} title="Плеер не загрузился" text="Попробуйте ещё раз или выберите другой источник." action={<Retry onClick={() => setFrameAttempt((value) => value + 1)} />} />}
-              {active.embedUrl ? <iframe
-                key={`${active.key}:${frameAttempt}`}
-                src={active.embedUrl ?? ""}
-                title={`${active.label}: ${title}`}
-                loading="lazy"
-                allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-                allowFullScreen
-                referrerPolicy="no-referrer"
-                onLoad={() => { setFrameState("ready"); setSlow(false); }}
-                onError={() => setFrameState("error")}
-                className={cn("absolute inset-0 h-full w-full border-0", frameState !== "ready" && "invisible")}
-              /> : active.embed ? <VibixEmbed embed={active.embed} /> : null}
+              {frameState !== "ready" && frameState !== "error" && (
+                <PlayerMessage
+                  icon={<LoaderCircle className="h-7 w-7 animate-spin" />}
+                  title={
+                    slow
+                      ? "Плеер загружается дольше обычного"
+                      : "Загружаем плеер…"
+                  }
+                  text={
+                    slow
+                      ? "Можно подождать или загрузить его ещё раз."
+                      : undefined
+                  }
+                  action={
+                    slow ? (
+                      <Retry
+                        onClick={() => setFrameAttempt((value) => value + 1)}
+                      />
+                    ) : undefined
+                  }
+                />
+              )}
+              {frameState === "error" && (
+                <PlayerMessage
+                  icon={<TriangleAlert className="h-7 w-7 text-skip" />}
+                  title="Плеер не загрузился"
+                  text="Попробуйте ещё раз или выберите другой источник."
+                  action={
+                    <Retry
+                      onClick={() => setFrameAttempt((value) => value + 1)}
+                    />
+                  }
+                />
+              )}
+              <PlayerSource active={active} frameAttempt={frameAttempt} title={title} frameState={frameState} onReady={() => { setFrameState("ready"); setSlow(false); }} onError={() => setFrameState("error")} />
             </>
           )}
         </div>
@@ -177,14 +274,64 @@ export function MoviePlayer({ movieId, isSeries, title, onAvailabilityChange }: 
   );
 }
 
-function VibixEmbed({ embed }: { embed: { publisherId: string; type: string; id: string } }) {
-  return <ins data-publisher-id={embed.publisherId} data-type={embed.type} data-id={embed.id} data-design="1" data-width="100%" data-height="500px" className="block min-h-[280px] w-full" />;
+type ActivePlayerSource = { key: string; label: string; embedUrl: string | null; embed: { publisherId: string; type: string; id: string } | null };
+function PlayerSource({ active, frameAttempt, title, frameState, onReady, onError }: { active: ActivePlayerSource | null; frameAttempt: number; title: string; frameState: string; onReady: () => void; onError: () => void }) {
+  if (!active) return null;
+  if (active.embedUrl) return <iframe key={`${active.key}:${frameAttempt}`} src={active.embedUrl} title={`${active.label}: ${title}`} loading="lazy" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="no-referrer" onLoad={onReady} onError={onError} className={cn("absolute inset-0 h-full w-full border-0", frameState !== "ready" && "invisible")} />;
+  if (active.embed) return <VibixEmbed embed={active.embed} />;
+  return null;
 }
 
-function PlayerMessage({ icon, title, text, action }: { icon: React.ReactNode; title: string; text?: string; action?: React.ReactNode }) {
-  return <div className="absolute inset-0 z-10 grid place-items-center bg-black p-5 text-center"><div className="flex max-w-md flex-col items-center"><div className="mb-3 text-white/70">{icon}</div><p className="font-semibold">{title}</p>{text && <p className="mt-1 text-sm text-white/55">{text}</p>}{action && <div className="mt-4">{action}</div>}</div></div>;
+function VibixEmbed({
+  embed,
+}: {
+  embed: { publisherId: string; type: string; id: string };
+}) {
+  return (
+    <ins
+      data-publisher-id={embed.publisherId}
+      data-type={embed.type}
+      data-id={embed.id}
+      data-design="1"
+      data-width="100%"
+      data-height="500px"
+      className="block min-h-[280px] w-full"
+    />
+  );
+}
+
+function PlayerMessage({
+  icon,
+  title,
+  text,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  text?: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="absolute inset-0 z-10 grid place-items-center bg-black p-5 text-center">
+      <div className="flex max-w-md flex-col items-center">
+        <div className="mb-3 text-white/70">{icon}</div>
+        <p className="font-semibold">{title}</p>
+        {text && <p className="mt-1 text-sm text-white/55">{text}</p>}
+        {action && <div className="mt-4">{action}</div>}
+      </div>
+    </div>
+  );
 }
 
 function Retry({ onClick }: { onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-semibold hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rating"><RotateCcw className="h-4 w-4" />Повторить</button>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-sm font-semibold hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rating"
+    >
+      <RotateCcw className="h-4 w-4" />
+      Повторить
+    </button>
+  );
 }

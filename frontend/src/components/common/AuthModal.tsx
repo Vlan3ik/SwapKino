@@ -15,7 +15,11 @@ interface AuthModalProps {
   initialMode?: "login" | "register";
 }
 
-export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalProps) {
+export function AuthModal({
+  open,
+  onClose,
+  initialMode = "login",
+}: AuthModalProps) {
   const { login, register } = useAppStore();
   const [mode, setMode] = useState<"login" | "register">(initialMode);
   const [identifier, setIdentifier] = useState("");
@@ -25,6 +29,9 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  let submitLabel = "Создать аккаунт";
+  if (loading) submitLabel = "Подождите…";
+  else if (mode === "login") submitLabel = "Войти";
   const [privacyConsent, setPrivacyConsent] = useState(false);
 
   const passwordRules = [
@@ -50,7 +57,9 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
     e.preventDefault();
     setError(null);
     if (mode === "register" && !passwordIsStrong) {
-      const missing = passwordRules.filter((rule) => !rule.valid).map((rule) => rule.label);
+      const missing = passwordRules
+        .filter((rule) => !rule.valid)
+        .map((rule) => rule.label);
       setError(`Пароль не надёжен. Добавь: ${missing.join(", ")}.`);
       return;
     }
@@ -109,6 +118,7 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
 
             {/* Закрыть */}
             <button
+              type="button"
               onClick={onClose}
               className="absolute top-4 right-4 h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
               aria-label="Закрыть"
@@ -119,7 +129,9 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
             {/* Лого */}
             <div className="flex items-center gap-2.5 mb-1">
               <BrandMark className="h-7 w-7" />
-              <span className="text-xl font-bold tracking-tight">СвайпКино</span>
+              <span className="text-xl font-bold tracking-tight">
+                СвайпКино
+              </span>
             </div>
 
             {/* Переключатель режимов */}
@@ -159,8 +171,31 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
 
               {mode === "register" && (
                 <label className="flex items-start gap-2 text-xs text-muted-foreground leading-relaxed cursor-pointer">
-                  <input type="checkbox" checked={privacyConsent} onChange={(e) => setPrivacyConsent(e.target.checked)} className="mt-0.5 accent-rating" />
-                  <span>Соглашаюсь на обработку персональных данных по <Link href="/privacy" target="_blank" className="text-rating hover:underline">Политике конфиденциальности</Link> и принимаю <Link href="/terms" target="_blank" className="text-rating hover:underline">Условия использования</Link>.</span>
+                  <input
+                    type="checkbox"
+                    checked={privacyConsent}
+                    onChange={(e) => setPrivacyConsent(e.target.checked)}
+                    className="mt-0.5 accent-rating"
+                  />
+                  <span>
+                    Соглашаюсь на обработку персональных данных по{" "}
+                    <Link
+                      href="/privacy"
+                      target="_blank"
+                      className="text-rating hover:underline"
+                    >
+                      Политике конфиденциальности
+                    </Link>{" "}
+                    и принимаю{" "}
+                    <Link
+                      href="/terms"
+                      target="_blank"
+                      className="text-rating hover:underline"
+                    >
+                      Условия использования
+                    </Link>
+                    .
+                  </span>
                 </label>
               )}
               {mode === "login" && (
@@ -181,7 +216,9 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
                   value={password}
                   onChange={setPassword}
                   minLength={mode === "register" ? 8 : undefined}
-                  autoComplete={mode === "register" ? "new-password" : "current-password"}
+                  autoComplete={
+                    mode === "register" ? "new-password" : "current-password"
+                  }
                 />
                 <button
                   type="button"
@@ -197,12 +234,23 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
               </div>
               {mode === "register" && (
                 <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 space-y-1.5">
-                  <p className={cn("text-xs font-semibold", passwordIsStrong ? "text-like" : "text-muted-foreground")}>
+                  <p
+                    className={cn(
+                      "text-xs font-semibold",
+                      passwordIsStrong ? "text-like" : "text-muted-foreground",
+                    )}
+                  >
                     {passwordIsStrong ? "Пароль надёжный" : "Пароль не надёжен"}
                   </p>
                   <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                     {passwordRules.map((rule) => (
-                      <span key={rule.label} className={cn("text-[11px]", rule.valid ? "text-like" : "text-muted-foreground")}>
+                      <span
+                        key={rule.label}
+                        className={cn(
+                          "text-[11px]",
+                          rule.valid ? "text-like" : "text-muted-foreground",
+                        )}
+                      >
                         {rule.valid ? "✓" : "○"} {rule.label}
                       </span>
                     ))}
@@ -226,14 +274,10 @@ export function AuthModal({ open, onClose, initialMode = "login" }: AuthModalPro
                 className={cn(
                   "w-full py-3 rounded-xl font-semibold text-sm transition-all mt-2",
                   "bg-white text-black hover:bg-rating",
-                  "disabled:opacity-60 disabled:cursor-not-allowed"
+                  "disabled:opacity-60 disabled:cursor-not-allowed",
                 )}
               >
-                {loading
-                  ? "Подождите…"
-                  : mode === "login"
-                  ? "Войти"
-                  : "Создать аккаунт"}
+                {submitLabel}
               </button>
             </form>
 
@@ -259,12 +303,13 @@ function ModeTab({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className={cn(
         "flex-1 py-2 rounded-lg text-sm font-medium transition-all",
         active
           ? "bg-white text-black shadow"
-          : "text-muted-foreground hover:text-foreground"
+          : "text-muted-foreground hover:text-foreground",
       )}
     >
       {label}

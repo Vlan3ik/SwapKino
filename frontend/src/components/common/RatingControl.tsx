@@ -29,7 +29,7 @@ export function RatingControl({ movieId, isSeries = false, compact = false }: Ra
     return (
       <div className="flex items-center gap-1">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-          <button
+          <button type="button"
             key={n}
             onMouseEnter={() => setHover(n)}
             onMouseLeave={() => setHover(null)}
@@ -78,7 +78,7 @@ export function RatingControl({ movieId, isSeries = false, compact = false }: Ra
               {stored}
               <span className="text-sm text-muted-foreground">/10</span>
             </div>
-            <button
+            <button type="button"
               onClick={() => removeRating(movieId, isSeries)}
               className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 mt-1"
             >

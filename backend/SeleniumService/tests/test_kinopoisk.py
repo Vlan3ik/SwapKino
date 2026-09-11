@@ -104,14 +104,16 @@ class KinopoiskCompletenessTests(unittest.TestCase):
     @patch("app.kinopoisk.WebDriverWait", FakeWait)
     def test_missing_intermediate_page_fails_instead_of_returning_partial_data(self):
         driver = FakeDriver({1: [card("1", 1)], 2: []}, 2)
+        scraper = self.scraper()
         with self.assertRaisesRegex(ScraperError, "не содержит карточек"):
-            self.scraper()._collect(driver, driver.current_url, True)
+            scraper._collect(driver, driver.current_url, True)
 
     @patch("app.kinopoisk.WebDriverWait", FakeWait)
     def test_repeated_page_fails_instead_of_looking_complete(self):
         driver = FakeDriver({1: [card("1", 1)], 2: [card("1", 2)]}, 2)
+        scraper = self.scraper()
         with self.assertRaisesRegex(ScraperError, "повторную страницу"):
-            self.scraper()._collect(driver, driver.current_url, True)
+            scraper._collect(driver, driver.current_url, True)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ export function LicenseView() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-8">
-      <button
+      <button type="button"
         onClick={() => setView({ name: "feed" })}
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
       >

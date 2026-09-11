@@ -10,9 +10,37 @@ import { useAppStore } from "@/lib/store";
 import type { Movie } from "@/types";
 import { cn } from "@/lib/utils";
 import { ArtworkImage } from "@/components/common/ArtworkImage";
-import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
-const GENRE_IDS: Record<string, number> = { "Боевик":28, "Анимация":16, "Биография":36, "Вестерн":37, "Военный":10752, "Детектив":9648, "Документальный":99, "Драма":18, "История":36, "Комедия":35, "Криминал":80, "Мелодрама":10749, "Музыка":10402, "Приключения":12, "Семейный":10751, "Триллер":53, "Ужасы":27, "Фантастика":878, "Фэнтези":14 };
+const GENRE_IDS: Record<string, number> = {
+  Боевик: 28,
+  Анимация: 16,
+  Биография: 36,
+  Вестерн: 37,
+  Военный: 10752,
+  Детектив: 9648,
+  Документальный: 99,
+  Драма: 18,
+  История: 36,
+  Комедия: 35,
+  Криминал: 80,
+  Мелодрама: 10749,
+  Музыка: 10402,
+  Приключения: 12,
+  Семейный: 10751,
+  Триллер: 53,
+  Ужасы: 27,
+  Фантастика: 878,
+  Фэнтези: 14,
+};
 const MAX_YEAR = new Date().getFullYear();
 function pageNumber(value: string | null) {
   const parsed = Number(value ?? 1);
@@ -34,7 +62,10 @@ export function CatalogView() {
   const initialAbort = useRef<AbortController | null>(null);
 
   const genresParam = params.get("genres") ?? "";
-  const genres = useMemo(() => genresParam.split(",").filter(Boolean), [genresParam]);
+  const genres = useMemo(
+    () => genresParam.split(",").filter(Boolean),
+    [genresParam],
+  );
   const minRating = Number(params.get("rating") || 0);
   const yearFrom = Number(params.get("from") || 1970);
   const yearTo = Number(params.get("to") || MAX_YEAR);
@@ -42,12 +73,20 @@ export function CatalogView() {
   const sort = params.get("sort") ?? "popular";
   const page = pageNumber(params.get("page"));
 
-  const replaceParams = useCallback((changes: Record<string, string | null>, resetPage = true) => {
-    const next = new URLSearchParams(window.location.search);
-    Object.entries(changes).forEach(([key, value]) => value ? next.set(key, value) : next.delete(key));
-    if (resetPage) next.delete("page");
-    router.replace(`/catalog${next.size ? `?${next}` : ""}`, { scroll: false });
-  }, [router]);
+  const replaceParams = useCallback(
+    (changes: Record<string, string | null>, resetPage = true) => {
+      const next = new URLSearchParams(window.location.search);
+      Object.entries(changes).forEach(([key, value]) =>
+        value ? next.set(key, value) : next.delete(key),
+      );
+      if (resetPage) next.delete("page");
+      const suffix = next.size ? `?${next}` : "";
+      router.replace(`/catalog${suffix}`, {
+        scroll: false,
+      });
+    },
+    [router],
+  );
 
   useEffect(() => {
     setSearch(initialQuery);
@@ -61,34 +100,59 @@ export function CatalogView() {
     return () => window.clearTimeout(timer);
   }, [search, initialQuery, replaceParams]);
 
-  const query = useMemo(() => ({
-    q: initialQuery || undefined,
-    genreIds: genres.map((name) => GENRE_IDS[name]).filter(Boolean),
-    minRating: minRating || undefined,
-    yearFrom: yearFrom !== 1970 ? yearFrom : undefined,
-    yearTo: yearTo !== MAX_YEAR ? yearTo : undefined,
-    isSeries: type === "all" ? undefined : type === "series",
-    sort,
-    limit: 20,
-  }), [initialQuery, genres, minRating, yearFrom, yearTo, type, sort]);
+  const query = useMemo(
+    () => ({
+      q: initialQuery || undefined,
+      genreIds: genres.map((name) => GENRE_IDS[name]).filter(Boolean),
+      minRating: minRating || undefined,
+      yearFrom: yearFrom !== 1970 ? yearFrom : undefined,
+      yearTo: yearTo !== MAX_YEAR ? yearTo : undefined,
+      isSeries: type === "all" ? undefined : type === "series",
+      sort,
+      limit: 20,
+    }),
+    [initialQuery, genres, minRating, yearFrom, yearTo, type, sort],
+  );
 
   const loadInitial = useCallback(async () => {
     initialAbort.current?.abort();
     const controller = new AbortController();
     initialAbort.current = controller;
     const id = ++requestId.current;
-    setLoading(true); setError(null);
+    setLoading(true);
+    setError(null);
     try {
-      const response = await api.movies({ ...query, page, signal: controller.signal });
+      const response = await api.movies({
+        ...query,
+        page,
+        signal: controller.signal,
+      });
       if (id !== requestId.current) return;
       const nextItems = moviePageItems(response).map(mapApiMovie);
       setItems(nextItems);
       setTotal(response.totalCount);
-      setTotalPages(response.totalPages ?? Math.max(1, Math.ceil(response.totalCount / (response.pageSize || query.limit || 20))));
-      useAppStore.setState((state) => ({ movies: mergeMovies(state.movies, nextItems) }));
+      setTotalPages(
+        response.totalPages ??
+          Math.max(
+            1,
+            Math.ceil(
+              response.totalCount / (response.pageSize || query.limit || 20),
+            ),
+          ),
+      );
+      useAppStore.setState((state) => ({
+        movies: mergeMovies(state.movies, nextItems),
+      }));
     } catch (cause) {
-      if ((cause as Error).name !== "AbortError" && id === requestId.current) setError(cause instanceof Error ? cause.message : "Не удалось загрузить каталог");
-    } finally { if (id === requestId.current) setLoading(false); }
+      if ((cause as Error).name !== "AbortError" && id === requestId.current)
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Не удалось загрузить каталог",
+        );
+    } finally {
+      if (id === requestId.current) setLoading(false);
+    }
   }, [page, query]);
 
   useEffect(() => {
@@ -99,57 +163,449 @@ export function CatalogView() {
   const goToPage = (nextPage: number) => {
     const bounded = Math.min(totalPages, Math.max(1, nextPage));
     const next = new URLSearchParams(window.location.search);
-    if (bounded === 1) next.delete("page"); else next.set("page", String(bounded));
-    router.push(`/catalog${next.size ? `?${next}` : ""}`);
+    if (bounded === 1) next.delete("page");
+    else next.set("page", String(bounded));
+    const suffix = next.size ? `?${next}` : "";
+    router.push(`/catalog${suffix}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const toggleFavorite = useAppStore((state) => state.toggleFavorite);
   const isFavorite = useAppStore((state) => state.isFavorite);
-  const activeCount = genres.length + Number(minRating > 0) + Number(type !== "all") + Number(yearFrom !== 1970 || yearTo !== MAX_YEAR);
+  const activeCount =
+    genres.length +
+    Number(minRating > 0) +
+    Number(type !== "all") +
+    Number(yearFrom !== 1970 || yearTo !== MAX_YEAR);
 
-  return <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-7">
-    <div className="mb-6"><h1 className="text-3xl font-bold">Каталог</h1><p className="text-sm text-muted-foreground mt-1">{loading ? "Собираем фильмы…" : `${total.toLocaleString("ru-RU")} фильмов и сериалов`}</p></div>
-    <div className="flex flex-col sm:flex-row gap-3 mb-4">
-      <label className="relative flex-1"><Search className="absolute left-3.5 top-3 h-4 w-4 text-muted-foreground"/><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Название фильма или сериала" className="w-full glass-panel rounded-xl pl-10 pr-10 py-2.5 text-sm outline-none focus:ring-2 focus:ring-rating/40"/>{search && <button aria-label="Очистить поиск" onClick={() => setSearch("")} className="absolute right-3 top-2.5"><X className="h-4 w-4"/></button>}</label>
-      <button onClick={() => setFiltersOpen((value) => !value)} className={cn("px-4 py-2.5 rounded-xl border flex items-center gap-2 text-sm", (filtersOpen || activeCount) && "border-rating/40 bg-rating/10 text-rating")}><SlidersHorizontal className="h-4 w-4"/>Фильтры{activeCount > 0 && <span className="rounded-full bg-rating px-1.5 text-black">{activeCount}</span>}</button>
-      <select value={sort} onChange={(e) => replaceParams({ sort: e.target.value === "popular" ? null : e.target.value })} className="glass-panel rounded-xl px-3 py-2.5 text-sm"><option value="popular">Популярные</option><option value="rating-desc">По рейтингу</option><option value="year-desc">Сначала новые</option><option value="year-asc">Сначала старые</option><option value="title">По алфавиту</option></select>
+  return (
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-7">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold">Каталог</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          {loading
+            ? "Собираем фильмы…"
+            : `${total.toLocaleString("ru-RU")} фильмов и сериалов`}
+        </p>
+      </div>
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <label className="relative flex-1">
+          <Search className="absolute left-3.5 top-3 h-4 w-4 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Название фильма или сериала"
+            className="w-full glass-panel rounded-xl pl-10 pr-10 py-2.5 text-sm outline-none focus:ring-2 focus:ring-rating/40"
+          />
+          {search && (
+            <button
+              type="button"
+              aria-label="Очистить поиск"
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-2.5"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </label>
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((value) => !value)}
+          className={cn(
+            "px-4 py-2.5 rounded-xl border flex items-center gap-2 text-sm",
+            (filtersOpen || activeCount) &&
+              "border-rating/40 bg-rating/10 text-rating",
+          )}
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+          Фильтры
+          {activeCount > 0 && (
+            <span className="rounded-full bg-rating px-1.5 text-black">
+              {activeCount}
+            </span>
+          )}
+        </button>
+        <select
+          value={sort}
+          onChange={(e) =>
+            replaceParams({
+              sort: e.target.value === "popular" ? null : e.target.value,
+            })
+          }
+          className="glass-panel rounded-xl px-3 py-2.5 text-sm"
+        >
+          <option value="popular">Популярные</option>
+          <option value="rating-desc">По рейтингу</option>
+          <option value="year-desc">Сначала новые</option>
+          <option value="year-asc">Сначала старые</option>
+          <option value="title">По алфавиту</option>
+        </select>
+      </div>
+      {filtersOpen && (
+        <div className="glass-panel rounded-2xl p-5 mb-5 space-y-5">
+          <div>
+            <p className="text-xs uppercase text-muted-foreground mb-2">Тип</p>
+            <div className="flex gap-2">
+              {[
+                ["all", "Всё"],
+                ["film", "Фильмы"],
+                ["series", "Сериалы"],
+              ].map(([value, label]) => (
+                <button
+                  type="button"
+                  key={value}
+                  onClick={() =>
+                    replaceParams({ type: value === "all" ? null : value })
+                  }
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg border text-sm",
+                    type === value && "bg-white text-black",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-xs uppercase text-muted-foreground mb-2">
+              Жанры <span className="normal-case">(любой из выбранных)</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {allGenres.map((genre) => (
+                <button
+                  type="button"
+                  key={genre}
+                  onClick={() => {
+                    const next = genres.includes(genre)
+                      ? genres.filter((item) => item !== genre)
+                      : [...genres, genre];
+                    replaceParams({ genres: next.join(",") || null });
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg border text-sm",
+                    genres.includes(genre) &&
+                      "bg-rating text-black border-rating",
+                  )}
+                >
+                  {genre}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid sm:grid-cols-3 gap-4">
+            <label className="text-xs text-muted-foreground">
+              Рейтинг от <b className="text-foreground">{minRating}</b>
+              <input
+                className="block w-full mt-2 accent-rating"
+                type="range"
+                min="0"
+                max="9"
+                step="0.5"
+                value={minRating}
+                onChange={(e) =>
+                  replaceParams({
+                    rating: e.target.value === "0" ? null : e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label className="text-xs text-muted-foreground">
+              Год от{" "}
+              <input
+                className="block mt-2 w-full rounded-lg bg-black/30 border border-white/10 p-2 text-foreground"
+                type="number"
+                value={yearFrom}
+                onChange={(e) =>
+                  replaceParams({
+                    from: e.target.value === "1970" ? null : e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label className="text-xs text-muted-foreground">
+              Год до{" "}
+              <input
+                className="block mt-2 w-full rounded-lg bg-black/30 border border-white/10 p-2 text-foreground"
+                type="number"
+                value={yearTo}
+                onChange={(e) =>
+                  replaceParams({
+                    to:
+                      e.target.value === String(MAX_YEAR)
+                        ? null
+                        : e.target.value,
+                  })
+                }
+              />
+            </label>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSearch("");
+              router.replace("/catalog", { scroll: false });
+            }}
+            className="text-xs text-muted-foreground hover:text-white flex gap-1"
+          >
+            <X className="h-3 w-3" />
+            Сбросить всё
+          </button>
+        </div>
+      )}
+      {activeCount > 0 && (
+        <div className="flex flex-wrap gap-2 mb-5">
+          {genres.map((genre) => (
+            <button
+              type="button"
+              key={genre}
+              onClick={() =>
+                replaceParams({
+                  genres:
+                    genres.filter((item) => item !== genre).join(",") || null,
+                })
+              }
+              className="rounded-full bg-white/8 px-3 py-1 text-xs"
+            >
+              {genre} ×
+            </button>
+          ))}
+        </div>
+      )}
+      {(() => {
+        if (loading) return <CatalogSkeleton />;
+        if (items.length === 0 && !error) return <Empty />;
+        return (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {items.flatMap((movie, index) => [
+            <CatalogCard
+              key={`${movie.type}:${movie.id}`}
+              movie={movie}
+              favorite={isFavorite(movie.id, movie.type === "series")}
+              onFavorite={() =>
+                toggleFavorite(movie.id, movie.type === "series")
+              }
+              onOpen={() => undefined}
+            />,
+            index === 9 ? (
+              <VibixBanner
+                key="vibix-banner-desktop"
+                className="hidden lg:flex"
+              />
+            ) : null,
+            index === 11 ? (
+              <VibixBanner
+                key="vibix-banner-compact"
+                className="flex lg:hidden"
+              />
+            ) : null,
+          ])}
+        </div>
+        );
+      })()}
+      {error && (
+        <div className="my-8 rounded-xl border border-skip/30 bg-skip/10 p-4 text-sm">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => void loadInitial()}
+            className="mt-2 underline"
+          >
+            Повторить
+          </button>
+        </div>
+      )}
+      {!loading && totalPages > 1 && (
+        <CatalogPagination
+          page={page}
+          totalPages={totalPages}
+          onChange={goToPage}
+        />
+      )}
     </div>
-    {filtersOpen && <div className="glass-panel rounded-2xl p-5 mb-5 space-y-5">
-      <div><p className="text-xs uppercase text-muted-foreground mb-2">Тип</p><div className="flex gap-2">{[["all", "Всё"], ["film", "Фильмы"], ["series", "Сериалы"]].map(([value,label]) => <button key={value} onClick={() => replaceParams({ type: value === "all" ? null : value })} className={cn("px-3 py-1.5 rounded-lg border text-sm", type === value && "bg-white text-black")}>{label}</button>)}</div></div>
-      <div><p className="text-xs uppercase text-muted-foreground mb-2">Жанры <span className="normal-case">(любой из выбранных)</span></p><div className="flex flex-wrap gap-2">{allGenres.map((genre) => <button key={genre} onClick={() => { const next = genres.includes(genre) ? genres.filter((item) => item !== genre) : [...genres, genre]; replaceParams({ genres: next.join(",") || null }); }} className={cn("px-3 py-1.5 rounded-lg border text-sm", genres.includes(genre) && "bg-rating text-black border-rating")}>{genre}</button>)}</div></div>
-      <div className="grid sm:grid-cols-3 gap-4"><label className="text-xs text-muted-foreground">Рейтинг от <b className="text-foreground">{minRating}</b><input className="block w-full mt-2 accent-rating" type="range" min="0" max="9" step="0.5" value={minRating} onChange={(e) => replaceParams({ rating: e.target.value === "0" ? null : e.target.value })}/></label><label className="text-xs text-muted-foreground">Год от<input className="block mt-2 w-full rounded-lg bg-black/30 border border-white/10 p-2 text-foreground" type="number" value={yearFrom} onChange={(e) => replaceParams({ from: e.target.value === "1970" ? null : e.target.value })}/></label><label className="text-xs text-muted-foreground">Год до<input className="block mt-2 w-full rounded-lg bg-black/30 border border-white/10 p-2 text-foreground" type="number" value={yearTo} onChange={(e) => replaceParams({ to: e.target.value === String(MAX_YEAR) ? null : e.target.value })}/></label></div>
-      <button onClick={() => { setSearch(""); router.replace("/catalog", { scroll: false }); }} className="text-xs text-muted-foreground hover:text-white flex gap-1"><X className="h-3 w-3"/>Сбросить всё</button>
-    </div>}
-    {activeCount > 0 && <div className="flex flex-wrap gap-2 mb-5">{genres.map((genre) => <button key={genre} onClick={() => replaceParams({ genres: genres.filter((item) => item !== genre).join(",") || null })} className="rounded-full bg-white/8 px-3 py-1 text-xs">{genre} ×</button>)}</div>}
-    {loading ? <CatalogSkeleton/> : items.length === 0 && !error ? <Empty/> : <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">{items.flatMap((movie, index) => [
-      <CatalogCard key={`${movie.type}:${movie.id}`} movie={movie} favorite={isFavorite(movie.id, movie.type === "series")} onFavorite={() => toggleFavorite(movie.id, movie.type === "series")} onOpen={() => undefined}/>,
-      index === 9 ? <VibixBanner key="vibix-banner-desktop" className="hidden lg:flex" /> : null,
-      index === 11 ? <VibixBanner key="vibix-banner-compact" className="flex lg:hidden" /> : null,
-    ])}</div>}
-    {error && <div className="my-8 rounded-xl border border-skip/30 bg-skip/10 p-4 text-sm"><p>{error}</p><button onClick={() => void loadInitial()} className="mt-2 underline">Повторить</button></div>}
-    {!loading && totalPages > 1 && <CatalogPagination page={page} totalPages={totalPages} onChange={goToPage} />}
-  </div>;
+  );
 }
 
-function CatalogPagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (page: number) => void }) {
-  const pages = new Set([1, totalPages, page - 2, page - 1, page, page + 1, page + 2].filter((value) => value >= 1 && value <= totalPages));
+function CatalogPagination({
+  page,
+  totalPages,
+  onChange,
+}: {
+  page: number;
+  totalPages: number;
+  onChange: (page: number) => void;
+}) {
+  const pages = new Set(
+    [1, totalPages, page - 2, page - 1, page, page + 1, page + 2].filter(
+      (value) => value >= 1 && value <= totalPages,
+    ),
+  );
   const visible = [...pages].sort((a, b) => a - b);
-  return <Pagination className="mt-9"><PaginationContent>
-    <PaginationItem><PaginationPrevious href="#catalog" onClick={(event) => { event.preventDefault(); if (page > 1) onChange(page - 1); }} /></PaginationItem>
-    {visible.map((value, index) => <span key={value} className="contents">
-      {index > 0 && value - visible[index - 1] > 1 && <PaginationItem><PaginationEllipsis /></PaginationItem>}
-      <PaginationItem><PaginationLink href={`#page-${value}`} isActive={value === page} onClick={(event) => { event.preventDefault(); if (value !== page) onChange(value); }}>{value}</PaginationLink></PaginationItem>
-    </span>)}
-    <PaginationItem><PaginationNext href="#catalog" onClick={(event) => { event.preventDefault(); if (page < totalPages) onChange(page + 1); }} /></PaginationItem>
-  </PaginationContent></Pagination>;
+  return (
+    <Pagination className="mt-9">
+      <PaginationContent>
+        <PaginationItem>
+          <PaginationPrevious
+            href="#catalog"
+            onClick={(event) => {
+              event.preventDefault();
+              if (page > 1) onChange(page - 1);
+            }}
+          />
+        </PaginationItem>
+        {visible.map((value, index) => (
+          <span key={value} className="contents">
+            {index > 0 && value - visible[index - 1] > 1 && (
+              <PaginationItem>
+                <PaginationEllipsis />
+              </PaginationItem>
+            )}
+            <PaginationItem>
+              <PaginationLink
+                href={`#page-${value}`}
+                isActive={value === page}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (value !== page) onChange(value);
+                }}
+              >
+                {value}
+              </PaginationLink>
+            </PaginationItem>
+          </span>
+        ))}
+        <PaginationItem>
+          <PaginationNext
+            href="#catalog"
+            onClick={(event) => {
+              event.preventDefault();
+              if (page < totalPages) onChange(page + 1);
+            }}
+          />
+        </PaginationItem>
+      </PaginationContent>
+    </Pagination>
+  );
 }
 
-function CatalogCard({ movie, favorite, onFavorite, onOpen }: { movie: Movie; favorite: boolean; onFavorite: () => void; onOpen: () => void }) {
+function CatalogCard({
+  movie,
+  favorite,
+  onFavorite,
+  onOpen,
+}: {
+  movie: Movie;
+  favorite: boolean;
+  onFavorite: () => void;
+  onOpen: () => void;
+}) {
   const href = `/movie/${movie.id}${movie.type === "series" ? "?series=1" : ""}`;
-  return <article className="group"><div className="relative aspect-[2/3] overflow-hidden rounded-xl border border-white/10 bg-white/5"><ArtworkImage src={movie.posterUrl} title={movie.title} fallbackLabel="Постер не загружен" alt={movie.title} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"/><div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent"/>{movie.rating != null && <span className="absolute right-2 top-2 rounded-md bg-black/70 px-2 py-1 text-xs text-rating"><Star className="inline h-3 w-3 fill-current"/> {movie.rating.toFixed(1)}</span>}<button aria-label={favorite ? "Убрать из избранного" : "В избранное"} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onFavorite(); }} className={cn("absolute left-2 top-2 z-20 h-8 w-8 rounded-full grid place-items-center bg-black/70 transition-transform hover:scale-110", favorite && "bg-like text-black")}><Heart className="h-4 w-4" fill={favorite ? "currentColor" : "none"}/></button><Link href={href} onClick={onOpen} className="absolute inset-0 z-10" aria-label={`Открыть ${movie.title}`}/><div className="absolute inset-x-0 bottom-0 z-10 p-3 pointer-events-none"><h2 className="text-sm font-semibold line-clamp-2">{movie.title}</h2><div className="mt-1 flex gap-2 text-[10px] text-white/65">{movie.year && <span>{movie.year}</span>}{movie.duration && <span><Clock className="inline h-2.5 w-2.5"/> {formatDuration(movie.duration)}</span>}{movie.type === "series" && <span className="text-rating">СЕРИАЛ</span>}</div></div></div></article>;
+  return (
+    <article className="group">
+      <div className="relative aspect-[2/3] overflow-hidden rounded-xl border border-white/10 bg-white/5">
+        <ArtworkImage
+          src={movie.posterUrl}
+          title={movie.title}
+          fallbackLabel="Постер не загружен"
+          alt={movie.title}
+          loading="lazy"
+          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
+        {movie.rating != null && (
+          <span className="absolute right-2 top-2 rounded-md bg-black/70 px-2 py-1 text-xs text-rating">
+            <Star className="inline h-3 w-3 fill-current" />{" "}
+            {movie.rating.toFixed(1)}
+          </span>
+        )}
+        <button
+          type="button"
+          aria-label={favorite ? "Убрать из избранного" : "В избранное"}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onFavorite();
+          }}
+          className={cn(
+            "absolute left-2 top-2 z-20 h-8 w-8 rounded-full grid place-items-center bg-black/70 transition-transform hover:scale-110",
+            favorite && "bg-like text-black",
+          )}
+        >
+          <Heart
+            className="h-4 w-4"
+            fill={favorite ? "currentColor" : "none"}
+          />
+        </button>
+        <Link
+          href={href}
+          onClick={onOpen}
+          className="absolute inset-0 z-10"
+          aria-label={`Открыть ${movie.title}`}
+        />
+        <div className="absolute inset-x-0 bottom-0 z-10 p-3 pointer-events-none">
+          <h2 className="text-sm font-semibold line-clamp-2">{movie.title}</h2>
+          <div className="mt-1 flex gap-2 text-[10px] text-white/65">
+            {movie.year && <span>{movie.year}</span>}
+            {movie.duration && (
+              <span>
+                <Clock className="inline h-2.5 w-2.5" />{" "}
+                {formatDuration(movie.duration)}
+              </span>
+            )}
+            {movie.type === "series" && (
+              <span className="text-rating">СЕРИАЛ</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
 }
-function CatalogSkeleton() { return <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">{Array.from({ length: 10 }, (_, i) => <div key={i} className="aspect-[2/3] rounded-xl bg-white/5 animate-pulse"/>)}</div>; }
-function VibixBanner({ className }: { className: string }) { return <aside aria-label="Рекламный блок" className={cn("col-span-full min-h-[266px] items-center justify-center overflow-hidden rounded-2xl border border-white/5 bg-white/[0.02] p-2 md:min-h-[106px]", className)}><ins data-pm-b="728x90" className="hidden max-w-full md:block"/><ins data-pm-b="300x250" className="block md:hidden"/></aside>; }
-function Empty() { return <div className="py-24 text-center"><div className="text-4xl mb-3">🎬</div><h2 className="font-semibold">Ничего не нашлось</h2><p className="text-sm text-muted-foreground">Сними часть фильтров или измени запрос.</p></div>; }
-function formatDuration(value: number) { return value < 60 ? `${value} мин` : `${Math.floor(value / 60)} ч ${value % 60 || ""}`.trim(); }
-function mergeMovies(current: Movie[], incoming: Movie[]) { const map = new Map(current.map((movie) => [`${movie.type}:${movie.id}`, movie])); incoming.forEach((movie) => map.set(`${movie.type}:${movie.id}`, movie)); return [...map.values()]; }
+function CatalogSkeleton() {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+      {Array.from({ length: 10 }, (_, i) => (
+        <div
+          key={i}
+          className="aspect-[2/3] rounded-xl bg-white/5 animate-pulse"
+        />
+      ))}
+    </div>
+  );
+}
+function VibixBanner({ className }: { className: string }) {
+  return (
+    <aside
+      aria-label="Рекламный блок"
+      className={cn(
+        "col-span-full min-h-[266px] items-center justify-center overflow-hidden rounded-2xl border border-white/5 bg-white/[0.02] p-2 md:min-h-[106px]",
+        className,
+      )}
+    >
+      <ins data-pm-b="728x90" className="hidden max-w-full md:block" />
+      <ins data-pm-b="300x250" className="block md:hidden" />
+    </aside>
+  );
+}
+function Empty() {
+  return (
+    <div className="py-24 text-center">
+      <div className="text-4xl mb-3">🎬</div>
+      <h2 className="font-semibold">Ничего не нашлось</h2>
+      <p className="text-sm text-muted-foreground">
+        Сними часть фильтров или измени запрос.
+      </p>
+    </div>
+  );
+}
+function formatDuration(value: number) {
+  return value < 60
+    ? `${value} мин`
+    : `${Math.floor(value / 60)} ч ${value % 60 || ""}`.trim();
+}
+function mergeMovies(current: Movie[], incoming: Movie[]) {
+  const map = new Map(
+    current.map((movie) => [`${movie.type}:${movie.id}`, movie]),
+  );
+  incoming.forEach((movie) => map.set(`${movie.type}:${movie.id}`, movie));
+  return [...map.values()];
+}

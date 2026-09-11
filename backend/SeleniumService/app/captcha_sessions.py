@@ -1,6 +1,7 @@
 import threading
 import uuid
 import secrets
+import os
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -26,7 +27,7 @@ class CaptchaSession:
 class CaptchaSessionStore:
     """In-memory, single-process store for short-lived manual browser sessions."""
 
-    def __init__(self, ttl_seconds: int = 300, token_file: str = "/tmp/swapkino-novnc.tokens"):
+    def __init__(self, ttl_seconds: int = 300, token_file: str = "/var/run/swapkino/novnc.tokens"):
         self.ttl = timedelta(seconds=ttl_seconds)
         self.token_file = Path(token_file)
         self._sessions: dict[str, CaptchaSession] = {}
@@ -46,9 +47,12 @@ class CaptchaSessionStore:
 
     def _write_tokens_locked(self) -> None:
         self.token_file.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.token_file.parent, 0o700)
         temporary = self.token_file.with_suffix(".tmp")
         temporary.write_text("".join(f"{session.vnc_token}: localhost:5900\n" for session in self._sessions.values()), encoding="utf-8")
+        os.chmod(temporary, 0o600)
         temporary.replace(self.token_file)
+        os.chmod(self.token_file, 0o600)
 
     def add(self, driver: object, source_url: str, include_unrated: bool, collected_items: list[object] | None = None, page_number: int = 1, pages_total: int | None = None) -> CaptchaSession:
         with self._lock:

@@ -26,7 +26,7 @@ export function FavoritesView() {
           </p>
         </div>
         {favMovies.length > 0 && (
-          <button
+          <button type="button"
             onClick={() => router.push("/")}
             className="text-sm text-rating hover:underline"
           >
@@ -45,7 +45,7 @@ export function FavoritesView() {
             Чтобы добавить фильм в избранное, открой Ленту, выбери кинопленку и
             свайпай вправо те фильмы, которые хочешь посмотреть.
           </p>
-          <button
+          <button type="button"
             onClick={() => router.push("/")}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black font-semibold text-sm hover:bg-rating transition-colors"
           >
@@ -85,7 +85,7 @@ export function FavoritesView() {
                 </div>
 
                 {/* Удалить */}
-                <button
+                <button type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleFavorite(m.id, m.type === "series");

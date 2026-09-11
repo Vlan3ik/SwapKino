@@ -8,7 +8,7 @@ import { useAppStore } from "@/lib/store";
 export function PrivacyView() {
   const setView = useAppStore((s) => s.setView);
   return <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-8">
-    <button onClick={() => setView({ name: "feed" })} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-6"><ArrowLeft className="h-3.5 w-3.5" />На главную</button>
+    <button type="button" onClick={() => setView({ name: "feed" })} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-6"><ArrowLeft className="h-3.5 w-3.5" />На главную</button>
     <motion.article initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-panel rounded-3xl p-6 sm:p-10">
       <header className="flex items-center gap-3 mb-8"><div className="h-12 w-12 rounded-xl bg-rating/15 text-rating flex items-center justify-center"><Shield className="h-6 w-6" /></div><div><h1 className="text-2xl font-bold">Политика конфиденциальности</h1><p className="text-sm text-muted-foreground">Версия 2026-08-10 · обновлено 10 августа 2026</p></div></header>
       <div className="space-y-6 text-sm leading-relaxed text-foreground/90">

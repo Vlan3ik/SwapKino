@@ -17,34 +17,38 @@ public sealed class VibixClient(HttpClient http, IConfiguration config)
 {
     public bool HasExternalId(Movie movie) => movie.KinopoiskId is not null || !string.IsNullOrWhiteSpace(movie.ImdbId);
 
+    public Task<VibixLookup> FindAsync(int? kinopoiskId, string? imdbId, CancellationToken ct)
+        => FindByExternalIdsAsync(kinopoiskId, imdbId, ct);
+
     public async Task<VibixLookup> FindAsync(Movie movie, CancellationToken ct)
+        => await FindByExternalIdsAsync(movie.KinopoiskId, movie.ImdbId, ct);
+
+    private async Task<VibixLookup> FindByExternalIdsAsync(int? kinopoiskId, string? imdbId, CancellationToken ct)
     {
         var token = config["VIBIX_API_KEY"];
         if (string.IsNullOrWhiteSpace(token)) return new("not_configured", null);
-        if (!HasExternalId(movie)) return new("no_external_id", null);
+        if (kinopoiskId is null && string.IsNullOrWhiteSpace(imdbId)) return new("no_external_id", null);
 
-        var lastStatus = "not_found";
-
-        if (!string.IsNullOrWhiteSpace(movie.ImdbId))
+        if (!string.IsNullOrWhiteSpace(imdbId))
         {
-            var imdb = movie.ImdbId.Trim();
-            var byImdb = await GetVideoAsync($"api/v1/publisher/videos/imdb/{Uri.EscapeDataString(imdb)}", token, ct);
-            lastStatus = byImdb.Status;
-            var result = ToVideo(byImdb.Payload, "imdb", imdb);
-            if (result is not null) return new("available", result);
-            if (byImdb.Status is "unauthorized" or "forbidden" or "upstream_error") return new(byImdb.Status, null);
+            var result = await LookupAsync($"api/v1/publisher/videos/imdb/{Uri.EscapeDataString(imdbId.Trim())}", token, "imdb", imdbId.Trim(), ct);
+            if (result.Video is not null || result.Status is "unauthorized" or "forbidden" or "upstream_error") return result;
         }
 
-        if (movie.KinopoiskId is int kpId)
+        if (kinopoiskId is int kpId)
         {
-            var byKp = await GetVideoAsync($"api/v1/publisher/videos/kp/{kpId}", token, ct);
-            lastStatus = byKp.Status;
-            var result = ToVideo(byKp.Payload, "kp", kpId.ToString());
-            if (result is not null) return new("available", result);
-            if (byKp.Status is "unauthorized" or "forbidden" or "upstream_error") return new(byKp.Status, null);
+            var result = await LookupAsync($"api/v1/publisher/videos/kp/{kpId}", token, "kp", kpId.ToString(), ct);
+            if (result.Video is not null || result.Status is "unauthorized" or "forbidden" or "upstream_error") return result;
         }
 
-        return new(lastStatus is "not_found" ? "not_published" : lastStatus, null);
+        return new("not_published", null);
+    }
+
+    private async Task<VibixLookup> LookupAsync(string path, string token, string externalType, string externalId, CancellationToken ct)
+    {
+        var response = await GetVideoAsync(path, token, ct);
+        var video = ToVideo(response.Payload, externalType, externalId);
+        return video is null ? new(response.Status, null) : new("available", video);
     }
 
     private async Task<(JsonDocument? Payload, string Status)> GetVideoAsync(string path, string token, CancellationToken ct)

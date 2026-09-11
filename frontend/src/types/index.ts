@@ -1,9 +1,7 @@
-export type GenreName = string;
-
 export interface Genre {
   id: number;
   slug: string;
-  name: GenreName;
+  name: string;
 }
 
 export interface Person {
@@ -18,7 +16,7 @@ export interface Movie {
   title: string;
   originalTitle: string | null;
   year: number | null;
-  genres: GenreName[];
+  genres: string[];
   genreItems: Genre[];
   rating: number | null;
   duration: number | null;
@@ -46,7 +44,13 @@ export interface TasteProbeFeedItem {
   probeId: string;
   movieId: number;
   prompt: string;
-  options: Array<"more_like_this" | "less_like_this" | "not_for_me" | "already_watched" | "rate_inline">;
+  options: Array<
+    | "more_like_this"
+    | "less_like_this"
+    | "not_for_me"
+    | "already_watched"
+    | "rate_inline"
+  >;
 }
 
 export type FeedItem = MovieFeedItem | TasteProbeFeedItem;
@@ -56,7 +60,7 @@ export interface FilmReel {
   slug: string;
   title: string;
   subtitle: string;
-  genres: GenreName[];
+  genres: string[];
   strategy?: string;
   coverUrl?: string | null;
 }

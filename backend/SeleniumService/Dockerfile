@@ -18,6 +18,7 @@ COPY app ./app
 COPY run.py .
 COPY captcha-start.sh .
 RUN chmod +x captcha-start.sh
+RUN install -d -m 700 /var/run/swapkino
 
 EXPOSE 8081
 EXPOSE 6080

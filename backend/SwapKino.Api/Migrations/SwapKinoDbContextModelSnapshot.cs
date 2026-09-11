@@ -152,41 +152,17 @@ namespace SwapKino.Api.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
-            modelBuilder.Entity("SwapKino.Api.CatalogSyncState", b =>
+            modelBuilder.Entity("SwapKino.Api.Filmstrip", b =>
                 {
-                    b.Property<string>("Source")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<long>("ImportedCount")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("LastFetchedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("NextPage")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("TotalPages")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Source", "IsSeries");
-
-                    b.ToTable("CatalogSyncStates");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.Genre", b =>
-                {
-                    b.Property<int>("TmdbId")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ConfigVersion")
                         .HasColumnType("integer");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TmdbId"));
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("IsSeries")
                         .HasColumnType("boolean");
@@ -199,12 +175,60 @@ namespace SwapKino.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.HasKey("TmdbId");
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
 
                     b.HasIndex("Slug")
                         .IsUnique();
 
-                    b.ToTable("Genres");
+                    b.ToTable("Filmstrips");
+                });
+
+            modelBuilder.Entity("SwapKino.Api.FilmstripFeature", b =>
+                {
+                    b.Property<Guid>("FilmstripId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("FeatureType")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TmdbFeatureId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Mode")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("Weight")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("FilmstripId", "FeatureType", "TmdbFeatureId");
+
+                    b.ToTable("FilmstripFeatures");
+                });
+
+            modelBuilder.Entity("SwapKino.Api.FilmstripReference", b =>
+                {
+                    b.Property<Guid>("FilmstripId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("TmdbId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsSeries")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("Weight")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("FilmstripId", "TmdbId", "IsSeries");
+
+                    b.ToTable("FilmstripReferences");
                 });
 
             modelBuilder.Entity("SwapKino.Api.ImportItem", b =>
@@ -345,211 +369,25 @@ namespace SwapKino.Api.Migrations
                     b.ToTable("ImportJobs");
                 });
 
-            modelBuilder.Entity("SwapKino.Api.Keyword", b =>
+            modelBuilder.Entity("SwapKino.Api.KeywordAlias", b =>
                 {
-                    b.Property<int>("TmdbId")
+                    b.Property<int>("TmdbKeywordId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TmdbId"));
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TmdbKeywordId"));
 
-                    b.Property<string>("Name")
+                    b.Property<string>("OriginalName")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("Slug")
+                    b.Property<string>("RuName")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.HasKey("TmdbId");
+                    b.HasKey("TmdbKeywordId");
 
-                    b.HasIndex("Slug");
-
-                    b.ToTable("Keywords");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.Movie", b =>
-                {
-                    b.Property<int>("TmdbId")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("Adult")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("BackdropPath")
-                        .HasColumnType("text");
-
-                    b.Property<int>("DetailAttemptCount")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("DetailsState")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("DetailsUpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ImdbId")
-                        .HasColumnType("text");
-
-                    b.Property<int?>("KinopoiskId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("OriginalLanguage")
-                        .HasColumnType("text");
-
-                    b.Property<string>("OriginalTitle")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Overview")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Payload")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<double>("Popularity")
-                        .HasColumnType("double precision");
-
-                    b.Property<string>("PosterPath")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("RecommendationSyncedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int?>("RecommendationThemeVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ReleaseDate")
-                        .HasColumnType("text");
-
-                    b.Property<int?>("RuntimeMinutes")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("SummaryUpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Tagline")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<double>("VoteAverage")
-                        .HasColumnType("double precision");
-
-                    b.Property<int>("VoteCount")
-                        .HasColumnType("integer");
-
-                    b.HasKey("TmdbId", "IsSeries");
-
-                    b.HasIndex("ImdbId");
-
-                    b.HasIndex("KinopoiskId", "IsSeries");
-
-                    b.HasIndex("IsSeries", "Popularity", "TmdbId");
-
-                    b.ToTable("Movies");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.MovieGenre", b =>
-                {
-                    b.Property<int>("TmdbId")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("GenreId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("TmdbId", "IsSeries", "GenreId");
-
-                    b.HasIndex("GenreId");
-
-                    b.ToTable("MovieGenres");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.MovieKeyword", b =>
-                {
-                    b.Property<int>("TmdbId")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("KeywordId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("TmdbId", "IsSeries", "KeywordId");
-
-                    b.HasIndex("KeywordId");
-
-                    b.ToTable("MovieKeywords");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.MoviePerson", b =>
-                {
-                    b.Property<int>("TmdbId")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("PersonId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Department")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Character")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.HasKey("TmdbId", "IsSeries", "PersonId", "Department");
-
-                    b.ToTable("MoviePeople");
-                });
-
-
-            modelBuilder.Entity("SwapKino.Api.MovieThemeMembership", b =>
-                {
-                    b.Property<int>("TmdbId")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsSeries")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("ThemeSlug")
-                        .HasColumnType("text");
-
-                    b.Property<double>("Confidence")
-                        .HasColumnType("double precision");
-
-                    b.Property<int>("ThemeVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("TmdbId", "IsSeries", "ThemeSlug");
-
-                    b.HasIndex("ThemeSlug", "ThemeVersion");
-
-                    b.ToTable("MovieThemeMemberships");
+                    b.ToTable("KeywordAliases");
                 });
 
             modelBuilder.Entity("SwapKino.Api.OutboxEvent", b =>
@@ -779,11 +617,11 @@ namespace SwapKino.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<DateTime?>("RecommendationSyncedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<bool>("IsSeries")
                         .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("RecommendationSyncedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("SessionId")
                         .HasColumnType("text");
@@ -890,6 +728,35 @@ namespace SwapKino.Api.Migrations
                     b.ToTable("UserMovieStates");
                 });
 
+            modelBuilder.Entity("SwapKino.Api.UserTasteFeature", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("FeatureType")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TmdbFeatureId")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("ObservationCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("Weight")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("UserId", "FeatureType", "TmdbFeatureId");
+
+                    b.HasIndex("UserId", "Weight");
+
+                    b.ToTable("UserTasteFeatures");
+                });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
@@ -942,6 +809,28 @@ namespace SwapKino.Api.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("SwapKino.Api.FilmstripFeature", b =>
+                {
+                    b.HasOne("SwapKino.Api.Filmstrip", "Filmstrip")
+                        .WithMany("Features")
+                        .HasForeignKey("FilmstripId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Filmstrip");
+                });
+
+            modelBuilder.Entity("SwapKino.Api.FilmstripReference", b =>
+                {
+                    b.HasOne("SwapKino.Api.Filmstrip", "Filmstrip")
+                        .WithMany("References")
+                        .HasForeignKey("FilmstripId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Filmstrip");
+                });
+
             modelBuilder.Entity("SwapKino.Api.ImportItem", b =>
                 {
                     b.HasOne("SwapKino.Api.ImportJob", null)
@@ -949,67 +838,6 @@ namespace SwapKino.Api.Migrations
                         .HasForeignKey("ImportJobId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("SwapKino.Api.MovieGenre", b =>
-                {
-                    b.HasOne("SwapKino.Api.Genre", "Genre")
-                        .WithMany("MovieGenres")
-                        .HasForeignKey("GenreId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("SwapKino.Api.Movie", "Movie")
-                        .WithMany("MovieGenres")
-                        .HasForeignKey("TmdbId", "IsSeries")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Genre");
-
-                    b.Navigation("Movie");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.MovieKeyword", b =>
-                {
-                    b.HasOne("SwapKino.Api.Keyword", "Keyword")
-                        .WithMany("MovieKeywords")
-                        .HasForeignKey("KeywordId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("SwapKino.Api.Movie", "Movie")
-                        .WithMany("MovieKeywords")
-                        .HasForeignKey("TmdbId", "IsSeries")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Keyword");
-
-                    b.Navigation("Movie");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.MoviePerson", b =>
-                {
-                    b.HasOne("SwapKino.Api.Movie", "Movie")
-                        .WithMany("MoviePeople")
-                        .HasForeignKey("TmdbId", "IsSeries")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Movie");
-                });
-
-
-            modelBuilder.Entity("SwapKino.Api.MovieThemeMembership", b =>
-                {
-                    b.HasOne("SwapKino.Api.Movie", "Movie")
-                        .WithMany()
-                        .HasForeignKey("TmdbId", "IsSeries")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Movie");
                 });
 
             modelBuilder.Entity("SwapKino.Api.RefreshSession", b =>
@@ -1021,24 +849,11 @@ namespace SwapKino.Api.Migrations
                         .IsRequired();
                 });
 
-
-            modelBuilder.Entity("SwapKino.Api.Genre", b =>
+            modelBuilder.Entity("SwapKino.Api.Filmstrip", b =>
                 {
-                    b.Navigation("MovieGenres");
-                });
+                    b.Navigation("Features");
 
-            modelBuilder.Entity("SwapKino.Api.Keyword", b =>
-                {
-                    b.Navigation("MovieKeywords");
-                });
-
-            modelBuilder.Entity("SwapKino.Api.Movie", b =>
-                {
-                    b.Navigation("MovieGenres");
-
-                    b.Navigation("MovieKeywords");
-
-                    b.Navigation("MoviePeople");
+                    b.Navigation("References");
                 });
 #pragma warning restore 612, 618
         }

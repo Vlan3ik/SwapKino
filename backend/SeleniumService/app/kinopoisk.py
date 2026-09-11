@@ -176,44 +176,55 @@ class KinopoiskScraper:
         items: list[ScrapedItem] = list(initial_items or [])
         if self._captcha_or_blocked(driver):
             raise self._captcha_error(driver, items, start_page, known_pages_total)
-        try:
-            WebDriverWait(driver, self.settings.selenium_element_timeout_seconds).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, CARD_SELECTOR))
-            )
-        except TimeoutException:
-            if not items and self._is_explicit_empty(driver):
-                return ScrapeResult([], 1, 1)
-            raise ScraperError("Кинопоиск не вернул карточки: возможно, изменилась DOM-разметка или профиль недоступен")
+        if not self._wait_for_initial_cards(driver, items):
+            return ScrapeResult([], 1, 1)
         discovered_last_page = max(self._last_page(driver), start_page)
         last_page = max(known_pages_total or 1, discovered_last_page)
         if last_page > self.settings.selenium_max_pages:
             raise ScraperError(f"Импорт содержит {last_page} страниц, что превышает безопасный лимит {self.settings.selenium_max_pages}; частичный импорт не применён")
+        pages_processed = self._collect_pages(driver, source_url, items, start_page, last_page)
+        result = items if include_unrated else [item for item in items if item.rating is not None]
+        return ScrapeResult(result, pages_processed, last_page)
+
+    def _wait_for_initial_cards(self, driver: webdriver.Chrome, items: list[ScrapedItem]) -> bool:
+        try:
+            WebDriverWait(driver, self.settings.selenium_element_timeout_seconds).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, CARD_SELECTOR))
+            )
+            return True
+        except TimeoutException:
+            if not items and self._is_explicit_empty(driver): return False
+            raise ScraperError("Кинопоиск не вернул карточки: возможно, изменилась DOM-разметка или профиль недоступен")
+
+    def _collect_pages(self, driver: webdriver.Chrome, source_url: str, items: list[ScrapedItem], start_page: int, last_page: int) -> int:
         seen = {item.external_id for item in items}
         pages_processed = max((item.page for item in items), default=start_page - 1)
         for page_number in range(start_page, last_page + 1):
-            if page_number > start_page:
-                driver.get(with_page(source_url, page_number))
-                if self._captcha_or_blocked(driver):
-                    raise self._captcha_error(driver, items, page_number, last_page)
-                try:
-                    WebDriverWait(driver, self.settings.selenium_element_timeout_seconds).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, CARD_SELECTOR))
-                    )
-                except TimeoutException:
-                    raise ScraperError(f"Страница {page_number} не содержит карточек; импорт остановлен как неполный")
+            if page_number > start_page: self._open_page(driver, source_url, page_number, items, last_page)
             page_items = self._extract_current_page(driver, page_number)
-            if not page_items:
-                raise ScraperError(f"На странице {page_number} не удалось распознать ни одной карточки")
+            self._validate_page(page_items, page_number, start_page, seen)
             page_ids = {item.external_id for item in page_items}
-            if page_number > start_page and page_ids and page_ids.issubset(seen):
-                raise ScraperError(f"Пагинация вернула повторную страницу {page_number}; импорт не применён")
             items.extend(item for item in page_items if item.external_id not in seen)
             seen.update(page_ids)
             pages_processed = page_number
             if len(items) > self.settings.selenium_max_items:
                 raise ScraperError(f"Импорт превышает лимит {self.settings.selenium_max_items} позиций; частичный импорт не применён")
-        result = items if include_unrated else [item for item in items if item.rating is not None]
-        return ScrapeResult(result, pages_processed, last_page)
+        return pages_processed
+
+    def _open_page(self, driver: webdriver.Chrome, source_url: str, page_number: int, items: list[ScrapedItem], last_page: int) -> None:
+        driver.get(with_page(source_url, page_number))
+        if self._captcha_or_blocked(driver): raise self._captcha_error(driver, items, page_number, last_page)
+        try:
+            WebDriverWait(driver, self.settings.selenium_element_timeout_seconds).until(EC.presence_of_element_located((By.CSS_SELECTOR, CARD_SELECTOR)))
+        except TimeoutException:
+            raise ScraperError(f"Страница {page_number} не содержит карточек; импорт остановлен как неполный")
+
+    @staticmethod
+    def _validate_page(page_items: list[ScrapedItem], page_number: int, start_page: int, seen: set[str]) -> None:
+        if not page_items: raise ScraperError(f"На странице {page_number} не удалось распознать ни одной карточки")
+        page_ids = {item.external_id for item in page_items}
+        if page_number > start_page and page_ids and page_ids.issubset(seen):
+            raise ScraperError(f"Пагинация вернула повторную страницу {page_number}; импорт не применён")
 
     def scrape(self, profile_url: str, include_unrated: bool = True) -> tuple[str, ScrapeResult]:
         source_url = normalize_profile_url(str(profile_url))

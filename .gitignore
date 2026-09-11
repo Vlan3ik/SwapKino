@@ -6,6 +6,8 @@ frontend/.env
 # Build artifacts
 **/bin/
 **/obj/
+.sonarqube/
+**/TestResults/
 frontend/node_modules/
 frontend/.next/
 frontend/out/

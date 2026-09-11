@@ -120,13 +120,13 @@ export function RatingsView() {
             она появится здесь.
           </p>
           <div className="flex flex-wrap gap-3 justify-center">
-            <button
+            <button type="button"
               onClick={() => router.push("/catalog")}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black font-semibold text-sm hover:bg-rating transition-colors"
             >
               Открыть Каталог
             </button>
-            <button
+            <button type="button"
               onClick={() => router.push("/")}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-white/15 hover:bg-white/5 font-semibold text-sm transition-colors"
             >
@@ -179,7 +179,7 @@ export function RatingsView() {
                     )}
 
                     {/* Удалить оценку */}
-                    <button
+                    <button type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleRemove(movie.id, isSeries, movie.title);
@@ -217,7 +217,7 @@ export function RatingsView() {
                           <Play className="h-2.5 w-2.5" fill="currentColor" />
                           Смотреть
                         </a>}
-                        <button
+                        <button type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleFavorite(movie.id, isSeries);
@@ -274,7 +274,7 @@ function Pagination({
 
   return (
     <div className="flex items-center justify-center gap-2 mt-8">
-      <button
+      <button type="button"
         onClick={() => onChange(Math.max(1, page - 1))}
         disabled={page === 1}
         className={cn(
@@ -318,7 +318,7 @@ function Pagination({
         </>
       )}
 
-      <button
+      <button type="button"
         onClick={() => onChange(Math.min(totalPages, page + 1))}
         disabled={page === totalPages}
         className={cn(
@@ -344,7 +344,7 @@ function PageBtn({
   onClick: () => void;
 }) {
   return (
-    <button
+    <button type="button"
       onClick={onClick}
       className={cn(
         "h-9 w-9 rounded-lg text-sm font-bold border transition-all tabular-nums",

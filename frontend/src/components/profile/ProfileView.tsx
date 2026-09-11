@@ -12,6 +12,7 @@ import {
   UserPlus,
   ChevronRight,
   Settings,
+  Shield,
 } from "lucide-react";
 import { contentKey, parseContentKey, useAppStore } from "@/lib/store";
 import { motion } from "framer-motion";
@@ -34,7 +35,6 @@ export function ProfileView() {
     ratedEntries.length > 0
       ? ratedEntries.reduce((s, e) => s + e.rating, 0) / ratedEntries.length
       : 0;
-  const totalMinutes = favMovies.reduce((s, m) => s + (m.duration ?? 0), 0);
 
   const openAuth = (mode: "login" | "register") => {
     setAuthMode(mode);
@@ -76,6 +76,9 @@ export function ProfileView() {
             <button type="button" onClick={() => router.push("/profile/settings")} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm font-semibold transition hover:border-rating/50 hover:bg-rating/10">
               <Settings className="h-4 w-4 text-rating" /> Настройки
             </button>
+            {user.roles.includes("admin") && <button type="button" onClick={() => router.push("/admin")} className="inline-flex items-center gap-2 rounded-xl bg-rating px-4 py-2.5 text-sm font-bold text-black transition hover:bg-rating/80">
+              <Shield className="h-4 w-4" /> Админка
+            </button>}
           </div>
         </motion.div>
       ) : (
@@ -103,14 +106,14 @@ export function ProfileView() {
             персональные рекомендации на основе твоих вкусов.
           </p>
           <div className="relative flex flex-wrap gap-3 justify-center">
-            <button
+            <button type="button"
               onClick={() => openAuth("login")}
               className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black font-semibold text-sm hover:bg-rating transition-colors"
             >
               <LogIn className="h-4 w-4" />
               Войти
             </button>
-            <button
+            <button type="button"
               onClick={() => openAuth("register")}
               className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-white/15 hover:bg-white/5 font-semibold text-sm transition-colors"
             >

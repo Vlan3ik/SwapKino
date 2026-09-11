@@ -5,26 +5,22 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 using SwapKino.Api;
+using SwapKino.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddDbContext<SwapKinoDbContext>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Default") ?? builder.Configuration["DATABASE_URL"]));
+builder.Services.AddDbContext<SwapKinoDbContext>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Default") is { Length: > 0 } connection ? connection : builder.Configuration["DATABASE_URL"]));
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(builder.Configuration["REDIS_URL"] ?? "redis-runtime:6379,abortConnect=false"));
-builder.Services.AddHttpClient("gorse", c =>
-{
-    c.BaseAddress = new Uri((builder.Configuration["GORSE_URL"] ?? "http://gorse-server:8087/").TrimEnd('/') + "/");
-    c.Timeout = TimeSpan.FromSeconds(3);
-});
-builder.Services.AddScoped<RecommendationGateway>();
 builder.Services.AddHttpClient("selenium", c => c.BaseAddress = new Uri(builder.Configuration["SELENIUM_URL"] ?? "http://selenium-service:8081"));
 builder.Services.AddHttpClient("tmdb", c => c.BaseAddress = new Uri((builder.Configuration["TMDB_BASE_URL"] ?? "https://api.themoviedb.org/3").TrimEnd('/') + "/"));
 builder.Services.AddScoped<TmdbClient>();
 builder.Services.AddHostedService<OutboxDispatcher>();
 builder.Services.AddHostedService<ImportStreamWorker>();
-builder.Services.AddHostedService<RecommendationWorker>();
-builder.Services.AddHostedService<RecommendationHistorySyncWorker>();
-builder.Services.AddHostedService<RecommendationCatalogWorker>();
+builder.Services.AddHostedService<TasteProfileWorker>();
 var host = builder.Build();
 await host.RunAsync();
+
+namespace SwapKino.Worker
+{
 
 public abstract class RedisWorker(IServiceScopeFactory scopes, IConnectionMultiplexer redis, ILogger log) : BackgroundService
 {
@@ -81,7 +77,8 @@ public sealed class OutboxDispatcher(IServiceScopeFactory scopes, IConnectionMul
                 // recoverable after a long outage.
                 var recommendationPending = await Redis.StreamPendingAsync(Stream, "swapkino-recommendations");
                 var importPending = await Redis.StreamPendingAsync(Stream, "swapkino-imports");
-                if (recommendationPending.PendingMessageCount == 0 && importPending.PendingMessageCount == 0)
+                var tastePending = await Redis.StreamPendingAsync(Stream, "swapkino-taste");
+                if (recommendationPending.PendingMessageCount == 0 && importPending.PendingMessageCount == 0 && tastePending.PendingMessageCount == 0)
                     await Redis.StreamTrimAsync(Stream, 100_000, useApproximateMaxLength: false);
             }
             catch (Exception ex)
@@ -135,7 +132,7 @@ public sealed class ImportStreamWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await EnsureConsumerGroup(stoppingToken);
+        await EnsureConsumerGroup();
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -151,7 +148,7 @@ public sealed class ImportStreamWorker(
             }
             catch (RedisServerException ex) when (ex.Message.Contains("NOGROUP", StringComparison.OrdinalIgnoreCase))
             {
-                await EnsureConsumerGroup(stoppingToken);
+                await EnsureConsumerGroup();
             }
             catch (Exception ex)
             {
@@ -163,14 +160,13 @@ public sealed class ImportStreamWorker(
         }
     }
 
-    private async Task EnsureConsumerGroup(CancellationToken ct)
+    private async Task EnsureConsumerGroup()
     {
         try
         {
             await Redis.StreamCreateConsumerGroupAsync(Stream, Group, "0-0", createStream: true);
         }
-        catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP", StringComparison.OrdinalIgnoreCase)) { }
-        await Task.CompletedTask;
+        catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP", StringComparison.OrdinalIgnoreCase)) { Log.LogDebug(ex, "Redis consumer group already exists: {Group}", Group); }
     }
 
     private async Task ProcessEntry(StreamEntry entry, CancellationToken ct)
@@ -419,121 +415,65 @@ public sealed class ImportStreamWorker(
     private static async Task MatchAndApply(SwapKinoDbContext db, Guid jobId, TmdbClient tmdb, CancellationToken ct)
     {
         var started = DateTime.UtcNow;
-        // This projection deliberately excludes Payload and every details-only
-        // column. A catalog with multi-megabyte payloads remains cheap to match.
-        var localMovies = await ImportQueries.LightweightMovies(db.Movies.AsNoTracking()).ToListAsync(ct);
         var total = await db.ImportItems.CountAsync(x => x.ImportJobId == jobId, ct);
-        var processed = await db.ImportItems.CountAsync(x => x.ImportJobId == jobId && x.MatchStatus != "pending", ct);
-        while (true)
-        {
-            var items = await db.ImportItems.AsNoTracking().Where(x => x.ImportJobId == jobId && x.MatchStatus == "pending")
-                .OrderBy(x => x.Page).ThenBy(x => x.ExternalId).Take(ImportBatchSize).ToListAsync(ct);
-            if (items.Count == 0) break;
-            foreach (var item in items)
-            {
-                Movie? match = FindLocalMatch(localMovies, item);
-                if (match is null || MatchScore(match, item) < RequiredScore(item))
-                {
-                    // A low-confidence local candidate must not become a match
-                    // merely because the remote lookup failed.
-                    match = null;
-                    try
-                    {
-                        var remote = await tmdb.SearchAsync(item.Title, item.IsSeries, ct);
-                        match = SelectConfidentMatch(remote.Results, item);
-                        if (match is not null)
-                        {
-                            // Search results are detached candidates. Persist and enrich
-                            // only the candidate that passed the confidence checks.
-                            var detailed = await tmdb.Details(match.TmdbId, ct, match.IsSeries);
-                            match = LightweightMatch(detailed);
-                            db.ChangeTracker.Clear(); // do not retain the heavy details Payload
-                            var cached = localMovies.FirstOrDefault(x => x.TmdbId == match.TmdbId && x.IsSeries == match.IsSeries);
-                            if (cached is null) localMovies.Add(match);
-                            else CopyMatchFields(cached, match);
-                        }
-                    }
-                    catch (HttpRequestException ex)
-                    {
-                        item.MatchError = $"TMDB недоступен: {ex.Message}";
-                    }
-                }
-                var status = match is null ? "unmatched" : "matched";
-                var error = match is null ? item.MatchError ?? "TMDB-фильм не найден" : null;
-                await db.ImportItems.Where(x => x.Id == item.Id).ExecuteUpdateAsync(setters => setters
-                    .SetProperty(x => x.TmdbId, match == null ? (int?)null : match.TmdbId)
-                    .SetProperty(x => x.MatchStatus, status)
-                    .SetProperty(x => x.MatchError, error), ct);
-                processed++;
-            }
-            await SaveJobProgress(db, jobId, "Matching", 40, 75, processed, total, started, ct);
-            db.ChangeTracker.Clear();
-        }
+        await MatchPendingItems(db, jobId, tmdb, total, started, ct);
 
         var job = await db.ImportJobs.FindAsync([jobId], ct) ?? throw new InvalidOperationException("Import job disappeared");
         SetPhase(job, "Applying", 75, 0);
         await db.SaveChangesAsync(ct);
         db.ChangeTracker.Clear();
-        var profileId = ProfileId(job.ProfileUrl);
-        var userId = job.UserId;
-        var applied = 0;
-        var index = 0;
-        while (index < total)
+        await ApplyMatchedItems(db, job, total, started, ct);
+    }
+
+    private static async Task MatchPendingItems(SwapKinoDbContext db, Guid jobId, TmdbClient tmdb, int total, DateTime started, CancellationToken ct)
+    {
+        var processed = await db.ImportItems.CountAsync(x => x.ImportJobId == jobId && x.MatchStatus != "pending", ct);
+        while (true)
         {
-            var items = await db.ImportItems.AsNoTracking().Where(x => x.ImportJobId == jobId)
-                .OrderBy(x => x.Page).ThenBy(x => x.ExternalId).Skip(index).Take(ImportBatchSize).ToListAsync(ct);
-            if (items.Count == 0) break;
+            var items = await db.ImportItems.AsNoTracking().Where(x => x.ImportJobId == jobId && x.MatchStatus == "pending")
+                .OrderBy(x => x.Page).ThenBy(x => x.ExternalId).Take(ImportBatchSize).ToListAsync(ct);
+            if (items.Count == 0) return;
             foreach (var item in items)
             {
-                var external = await db.UserExternalItems.FindAsync([userId, "kinopoisk", profileId, item.ExternalId], ct);
-                if (external is null)
-                {
-                    external = new UserExternalItem { UserId = userId, Source = "kinopoisk", ProfileId = profileId, ExternalId = item.ExternalId };
-                    db.UserExternalItems.Add(external);
-                }
-                external.TmdbId = item.TmdbId;
-                external.IsSeries = item.IsSeries;
-                external.Rating = item.Rating;
-                external.Watched = true;
-                external.MatchStatus = item.MatchStatus;
-                external.MatchError = item.MatchError;
-                external.UpdatedAt = DateTime.UtcNow;
+                await MatchItem(db, tmdb, item, ct);
+                processed++;
+            }
+            await SaveJobProgress(db, new ProgressRequest(jobId, "Matching", 40, 75, processed, total, started), ct);
+            db.ChangeTracker.Clear();
+        }
+    }
 
-                if (item.MatchStatus != "matched" || item.TmdbId is null)
-                {
-                    index++;
-                    continue;
-                }
+    private static async Task MatchItem(SwapKinoDbContext db, TmdbClient tmdb, ImportItem item, CancellationToken ct)
+    {
+        TmdbImportCandidate? match = null;
+        try { match = SelectConfidentImportMatch(await tmdb.SearchCandidatesAsync(item.Title, item.IsSeries, ct), item); }
+        catch (HttpRequestException ex) { item.MatchError = $"TMDB недоступен: {ex.Message}"; }
+        var status = match is null ? "unmatched" : "matched";
+        var error = match is null ? item.MatchError ?? "TMDB-фильм не найден" : null;
+        await db.ImportItems.Where(x => x.Id == item.Id).ExecuteUpdateAsync(setters => setters
+            .SetProperty(x => x.TmdbId, match == null ? (int?)null : match.TmdbId)
+            .SetProperty(x => x.MatchStatus, status)
+            .SetProperty(x => x.MatchError, error), ct);
+    }
 
-                var actionType = item.Rating is null ? "watched" : "rate";
-                var key = $"kinopoisk:{profileId}:{item.ExternalId}";
-                var action = await db.UserActions.FirstOrDefaultAsync(x => x.UserId == userId && x.IdempotencyKey == key, ct);
-                if (action is null)
-                {
-                    action = new UserAction { UserId = userId, IdempotencyKey = key };
-                    db.UserActions.Add(action);
-                }
-                action.TmdbId = item.TmdbId!.Value;
-                action.IsSeries = item.IsSeries;
-                action.ActionType = actionType;
-                action.Value = item.Rating;
-                action.CreatedAt = DateTime.UtcNow;
-
-                var state = await db.UserMovieStates.FindAsync([userId, item.TmdbId.Value, item.IsSeries], ct);
-                if (state is null)
-                {
-                    state = new UserMovieState { UserId = userId, TmdbId = item.TmdbId.Value, IsSeries = item.IsSeries };
-                    db.UserMovieStates.Add(state);
-                }
-                state.Watched = true;
-                state.Rating = item.Rating;
-                state.UpdatedAt = DateTime.UtcNow;
-                applied++;
+    private static async Task ApplyMatchedItems(SwapKinoDbContext db, ImportJob job, int total, DateTime started, CancellationToken ct)
+    {
+        var profileId = ProfileId(job.ProfileUrl);
+        var index = 0;
+        var applied = 0;
+        while (index < total)
+        {
+            var items = await db.ImportItems.AsNoTracking().Where(x => x.ImportJobId == job.Id).OrderBy(x => x.Page).ThenBy(x => x.ExternalId).Skip(index).Take(ImportBatchSize).ToListAsync(ct);
+            if (items.Count == 0) return;
+            foreach (var item in items)
+            {
+                await ApplyItem(db, job.UserId, profileId, item, ct);
+                if (item.MatchStatus == "matched" && item.TmdbId is not null) applied++;
                 index++;
             }
             await db.SaveChangesAsync(ct);
             db.ChangeTracker.Clear();
-            job = await db.ImportJobs.FindAsync([jobId], ct) ?? throw new InvalidOperationException("Import job disappeared");
+            job = await db.ImportJobs.FindAsync([job.Id], ct) ?? throw new InvalidOperationException("Import job disappeared");
             job.AppliedCount = applied;
             UpdateProgress(job, "Applying", 75, 99, index, total, started);
             await db.SaveChangesAsync(ct);
@@ -541,39 +481,51 @@ public sealed class ImportStreamWorker(
         }
     }
 
-    private static Movie? FindLocalMatch(IEnumerable<Movie> candidates, ImportItem item)
+    private static async Task ApplyItem(SwapKinoDbContext db, Guid userId, string profileId, ImportItem item, CancellationToken ct)
     {
-        var normalized = Normalize(item.Title);
-        return candidates.Where(x => x.IsSeries == item.IsSeries).Select(x => (Movie: x, Score: MatchScore(x, item)))
-            .Where(x => Normalize(x.Movie.Title) == normalized || Normalize(x.Movie.OriginalTitle ?? "") == normalized)
-            .OrderByDescending(x => x.Score).Select(x => x.Movie).FirstOrDefault();
+        var external = await db.UserExternalItems.FindAsync([userId, "kinopoisk", profileId, item.ExternalId], ct)
+            ?? new UserExternalItem { UserId = userId, Source = "kinopoisk", ProfileId = profileId, ExternalId = item.ExternalId };
+        external.TmdbId = item.TmdbId; external.IsSeries = item.IsSeries; external.Rating = item.Rating; external.Watched = true;
+        external.MatchStatus = item.MatchStatus; external.MatchError = item.MatchError; external.UpdatedAt = DateTime.UtcNow;
+        if (db.Entry(external).State == EntityState.Detached) db.UserExternalItems.Add(external);
+        if (item.MatchStatus != "matched" || item.TmdbId is null) return;
+
+        var key = $"kinopoisk:{profileId}:{item.ExternalId}";
+        var action = await db.UserActions.FirstOrDefaultAsync(x => x.UserId == userId && x.IdempotencyKey == key, ct)
+            ?? new UserAction { UserId = userId, IdempotencyKey = key };
+        action.TmdbId = item.TmdbId.Value; action.IsSeries = item.IsSeries; action.ActionType = item.Rating is null ? "watched" : "rate";
+        action.Value = item.Rating; action.CreatedAt = DateTime.UtcNow;
+        if (db.Entry(action).State == EntityState.Detached) db.UserActions.Add(action);
+        var state = await db.UserMovieStates.FindAsync([userId, item.TmdbId.Value, item.IsSeries], ct)
+            ?? new UserMovieState { UserId = userId, TmdbId = item.TmdbId.Value, IsSeries = item.IsSeries };
+        state.Watched = true; state.Rating = item.Rating; state.UpdatedAt = DateTime.UtcNow;
+        if (db.Entry(state).State == EntityState.Detached) db.UserMovieStates.Add(state);
     }
 
-    private static Movie LightweightMatch(Movie movie) => new()
+    private static TmdbImportCandidate? SelectConfidentImportMatch(IEnumerable<TmdbImportCandidate> candidates, ImportItem item)
     {
-        TmdbId = movie.TmdbId,
-        IsSeries = movie.IsSeries,
-        Title = movie.Title,
-        OriginalTitle = movie.OriginalTitle,
-        ReleaseDate = movie.ReleaseDate,
-        VoteCount = movie.VoteCount
-    };
-
-    private static void CopyMatchFields(Movie target, Movie source)
-    {
-        target.Title = source.Title;
-        target.OriginalTitle = source.OriginalTitle;
-        target.ReleaseDate = source.ReleaseDate;
-        target.VoteCount = source.VoteCount;
+        var ranked = candidates.Where(x => x.IsSeries == item.IsSeries).Select(x => (Candidate: x, Score: ImportMatchScore(x, item))).OrderByDescending(x => x.Score).ThenByDescending(x => x.Candidate.VoteCount).ToList();
+        if (ranked.Count == 0 || ranked[0].Score < RequiredScore(item)) return null;
+        if (ranked.Count > 1 && ranked[0].Score - ranked[1].Score < 0.08 && ranked[0].Score < 0.94) return null;
+        return ranked[0].Candidate;
     }
 
-    private static async Task SaveJobProgress(SwapKinoDbContext db, Guid jobId, string phase, int from, int to, int done, int total, DateTime started, CancellationToken ct)
+    private static double ImportMatchScore(TmdbImportCandidate candidate, ImportItem item)
+    {
+        var wanted = Normalize(item.Title); var title = Normalize(candidate.Title); var original = Normalize(candidate.OriginalTitle ?? "");
+        var titleScore = wanted == title || wanted == original ? 0.72 : 0.55 * TokenSimilarity(wanted, title); var yearScore = 0d;
+        var releaseYear = candidate.ReleaseDate is { Length: >= 4 } ? candidate.ReleaseDate[..4] : null;
+        yearScore = YearScore(item.Year, releaseYear);
+        return Math.Clamp(titleScore + yearScore + Math.Min(candidate.VoteCount / 100_000d, 0.03), 0, 1);
+    }
+
+    private static async Task SaveJobProgress(SwapKinoDbContext db, ProgressRequest request, CancellationToken ct)
     {
         db.ChangeTracker.Clear();
-        var job = await db.ImportJobs.FindAsync([jobId], ct) ?? throw new InvalidOperationException("Import job disappeared");
-        job.MatchedCount = await db.ImportItems.CountAsync(x => x.ImportJobId == jobId && x.MatchStatus == "matched", ct);
-        job.UnmatchedCount = await db.ImportItems.CountAsync(x => x.ImportJobId == jobId && x.MatchStatus == "unmatched", ct);
-        UpdateProgress(job, phase, from, to, done, total, started);
+        var job = await db.ImportJobs.FindAsync([request.JobId], ct) ?? throw new InvalidOperationException("Import job disappeared");
+        job.MatchedCount = await db.ImportItems.CountAsync(x => x.ImportJobId == request.JobId && x.MatchStatus == "matched", ct);
+        job.UnmatchedCount = await db.ImportItems.CountAsync(x => x.ImportJobId == request.JobId && x.MatchStatus == "unmatched", ct);
+        UpdateProgress(job, request.Phase, request.From, request.To, request.Done, request.Total, request.Started);
         await db.SaveChangesAsync(ct);
     }
 
@@ -595,9 +547,15 @@ public sealed class ImportStreamWorker(
         var titleScore = wanted == title || wanted == original ? 0.72 : 0.55 * TokenSimilarity(wanted, title);
         var yearScore = 0d;
         var releaseYear = movie.ReleaseDate is { Length: >= 4 } ? movie.ReleaseDate[..4] : null;
-        if (item.Year is not null && int.TryParse(releaseYear, out var year))
-            yearScore = year == item.Year ? 0.25 : Math.Abs(year - item.Year.Value) == 1 ? 0.10 : -0.20;
+        yearScore = YearScore(item.Year, releaseYear);
         return Math.Clamp(titleScore + yearScore + Math.Min(movie.VoteCount / 100_000d, 0.03), 0, 1);
+    }
+
+    private static double YearScore(int? expectedYear, string? releaseYear)
+    {
+        if (expectedYear is null || !int.TryParse(releaseYear, out var actualYear)) return 0;
+        if (actualYear == expectedYear) return 0.25;
+        return Math.Abs(actualYear - expectedYear.Value) == 1 ? 0.10 : -0.20;
     }
 
     private static double RequiredScore(ImportItem item) => item.Year is null ? 0.70 : 0.78;
@@ -649,4 +607,7 @@ public sealed class ImportStreamWorker(
         [property: JsonPropertyName("sessionId")] string? SessionId);
     private sealed record RatingsResponse(int Total, int Rated, int Unrated, [property: JsonPropertyName("pages_processed")] int PagesProcessed, [property: JsonPropertyName("pages_total")] int PagesTotal, bool Complete, [property: JsonPropertyName("items")] List<RatingItem> Items);
     private sealed record RatingItem([property: JsonPropertyName("external_id")] string ExternalId, string Title, int? Year, string? Genres, double? Rating, string Kind, [property: JsonPropertyName("kinopoisk_url")] string KinopoiskUrl, int Page);
+    private sealed record ProgressRequest(Guid JobId, string Phase, int From, int To, int Done, int Total, DateTime Started);
+}
+
 }

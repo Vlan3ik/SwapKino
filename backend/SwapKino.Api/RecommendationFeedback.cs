@@ -26,11 +26,8 @@ public static class RecommendationFeedback
         if (state?.Rating is double rating && Normalize("rating", rating) is { } normalizedRating)
             result.Add(normalizedRating);
         if (state?.Favorite == true) result.Add(new("strong_positive", 2, false));
-        if (latestAction is not null && latestAction.ActionType is not "rating" and not "rate" and not "rate_inline" and not "favorite" and not "unfavorite" and not "watched" and not "unwatched")
-        {
-            if (Normalize(latestAction.ActionType, latestAction.Value) is { } latest)
-                result.Add(latest);
-        }
+        if (latestAction is not null && latestAction.ActionType is not "rating" and not "rate" and not "rate_inline" and not "favorite" and not "unfavorite" and not "watched" and not "unwatched" && Normalize(latestAction.ActionType, latestAction.Value) is { } latest)
+            result.Add(latest);
         return result.DistinctBy(x => x.Type).ToArray();
     }
 }

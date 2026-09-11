@@ -11,7 +11,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const restoreSession = useAppStore((state) => state.restoreSession);
   useEffect(() => { void restoreSession().catch(() => undefined); }, [restoreSession]);
-  const focusedReel = pathname.startsWith("/reels/");
+  const focusedReel = pathname.startsWith("/filmstrips/") || pathname.startsWith("/reels/");
 
   return (
     <div className="min-h-screen flex flex-col bg-background">

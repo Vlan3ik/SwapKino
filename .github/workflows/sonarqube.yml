@@ -1,0 +1,72 @@
+name: SonarQube
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL || 'https://sonarcloud.io' }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/bun.lock
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install --no-package-lock --legacy-peer-deps --ignore-scripts --no-audit --no-fund
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Install SonarScanner for .NET
+        run: dotnet tool install --tool-path .sonar/scanner dotnet-sonarscanner
+
+      - name: Begin SonarQube analysis
+        if: env.SONAR_TOKEN != ''
+        run: >-
+          .sonar/scanner/dotnet-sonarscanner begin
+          /k:"swapkino"
+          /d:sonar.host.url="$SONAR_HOST_URL"
+          /d:sonar.token="$SONAR_TOKEN"
+          /d:sonar.projectBaseDir="${{ github.workspace }}"
+          /d:sonar.qualitygate.wait=true
+          /d:sonar.qualitygate.timeout=300
+          /d:sonar.exclusions="**/bin/**,**/obj/**,**/node_modules/**,**/.next/**,**/Migrations/**,**/__pycache__/**,**/*.Designer.cs,**/public/**"
+          /d:sonar.coverage.exclusions="**/Migrations/**,**/Program.cs,**/bin/**,**/obj/**,**/node_modules/**,**/.next/**"
+          /d:sonar.cpd.exclusions="**/Migrations/**"
+          /d:sonar.cs.opencover.reportsPaths="${{ github.workspace }}/**/coverage.opencover.xml"
+
+      - name: Build backend
+        run: dotnet build backend/SwapKino.sln --no-restore
+
+      - name: Test backend with coverage
+        run: dotnet test backend/SwapKino.sln --no-build --collect:"XPlat Code Coverage;Format=opencover"
+
+      - name: End SonarQube analysis
+        if: env.SONAR_TOKEN != ''
+        run: .sonar/scanner/dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+      - name: Fail when SonarQube credentials are missing
+        if: env.SONAR_TOKEN == ''
+        run: |
+          echo "SONAR_TOKEN is required to publish the analysis." >&2
+          exit 1

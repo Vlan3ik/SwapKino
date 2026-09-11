@@ -9,7 +9,7 @@ export function TermsView() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-8">
-      <button
+      <button type="button"
         onClick={() => setView({ name: "feed" })}
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
       >
@@ -168,9 +168,9 @@ export function TermsView() {
           <section>
             <h2 className="font-bold text-base mb-2">11. Контакты</h2>
             <p>
-              Вопросы по Условиям использования можно задать по email:
+              Вопросы по Условиям использования можно задать по email:{" "}
               <a href="mailto:steammail_38@mail.ru" className="text-rating hover:underline ml-1">steammail_38@mail.ru</a>. Технические вопросы можно задать через Issues на GitHub:
-              <a
+              {" "}<a
                 href="https://github.com/Vlan3ik/SwapKino/issues"
                 target="_blank"
                 rel="noopener noreferrer"

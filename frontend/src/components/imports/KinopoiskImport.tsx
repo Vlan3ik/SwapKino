@@ -3,7 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Check, Circle, Clock, ExternalLink, Film, Link2, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  Circle,
+  Clock,
+  ExternalLink,
+  Film,
+  Link2,
+  Loader2,
+  RotateCcw,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { api, type ImportStatus } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -12,9 +24,18 @@ const STEPS = [
   { key: "Queued", title: "Запуск", text: "Подготавливаем импорт" },
   { key: "Scraping", title: "Получение", text: "Читаем страницы профиля" },
   { key: "Matching", title: "Сопоставление", text: "Находим фильмы в TMDB" },
-  { key: "Applying", title: "Применение", text: "Обновляем оценки и рекомендации" },
+  {
+    key: "Applying",
+    title: "Применение",
+    text: "Обновляем оценки и рекомендации",
+  },
 ];
-const TERMINAL = new Set(["Completed", "CompletedWithWarnings", "Failed", "Cancelled"]);
+const TERMINAL = new Set([
+  "Completed",
+  "CompletedWithWarnings",
+  "Failed",
+  "Cancelled",
+]);
 
 export function ImportStart() {
   const router = useRouter();
@@ -22,50 +43,533 @@ export function ImportStart() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const start = async () => {
-    setLoading(true); setError(null);
-    try { const job = await api.importProfile(url.trim()); router.push(`/imports/kinopoisk/${job.id}`); }
-    catch (cause) { const e = cause as Error & { data?: { id?: string } }; if (e.data?.id) router.push(`/imports/kinopoisk/${e.data.id}`); else setError(e.message || "Не удалось запустить импорт"); }
-    finally { setLoading(false); }
+    setLoading(true);
+    setError(null);
+    try {
+      const job = await api.importProfile(url.trim());
+      router.push(`/imports/kinopoisk/${job.id}`);
+    } catch (cause) {
+      const e = cause as Error & { data?: { id?: string } };
+      if (e.data?.id) router.push(`/imports/kinopoisk/${e.data.id}`);
+      else setError(e.message || "Не удалось запустить импорт");
+    } finally {
+      setLoading(false);
+    }
   };
-  return <main className="mx-auto max-w-4xl px-4 py-8 sm:py-12">
-    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mb-8 max-w-2xl">
-      <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-rating/20 bg-rating/10 px-3 py-1.5 text-xs font-semibold text-rating"><Link2 className="h-3.5 w-3.5" /> Импорт профиля</div>
-      <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Перенеси свою историю кино</h1>
-      <p className="mt-3 text-sm leading-6 text-muted-foreground">Сервис аккуратно перенесёт оценки и просмотренные фильмы с Кинопоиска, найдёт соответствия в каталоге и обновит твои рекомендации.</p>
-    </motion.div>
-    <div className="grid gap-5 lg:grid-cols-[1.15fr_.85fr]">
-      <motion.form onSubmit={event => { event.preventDefault(); void start(); }} initial={{ opacity: 0, x: -14 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: .08 }} className="glass-panel rounded-3xl p-5 sm:p-7">
-        <div className="flex items-start gap-3"><div className="rounded-xl bg-rating/15 p-2.5 text-rating"><Link2 className="h-5 w-5" /></div><div><h2 className="font-bold">Ссылка на публичный профиль</h2><p className="mt-1 text-xs text-muted-foreground">Например: kinopoisk.ru/user/123456/</p></div></div>
-        <input required type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://www.kinopoisk.ru/user/123456/" className="mt-6 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3.5 text-sm outline-none transition focus:border-rating/50 focus:ring-2 focus:ring-rating/20" />
-        {error && <p className="mt-3 rounded-xl border border-skip/20 bg-skip/10 px-3 py-2 text-xs text-skip">{error}</p>}
-        <button disabled={!url.trim() || loading} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-black transition hover:bg-rating disabled:opacity-40">{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />} {loading ? "Запускаем импорт…" : "Начать импорт"}</button>
-        <p className="mt-4 text-xs leading-5 text-muted-foreground">Профиль должен быть открыт для просмотра. Во время импорта можно закрыть вкладку — прогресс сохранится.</p>
-      </motion.form>
-      <motion.div initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: .16 }} className="rounded-3xl border border-white/10 bg-gradient-to-br from-rating/10 via-white/[.03] to-like/5 p-5 sm:p-7"><Sparkles className="h-6 w-6 text-rating" /><h2 className="mt-4 text-lg font-bold">Что произойдёт</h2><div className="mt-5 space-y-4">{STEPS.map((step, index) => <div key={step.key} className="flex gap-3"><div className="flex flex-col items-center"><div className="grid h-7 w-7 place-items-center rounded-full border border-rating/30 bg-rating/10 text-xs font-bold text-rating">{index + 1}</div>{index < STEPS.length - 1 && <div className="mt-1 h-5 w-px bg-white/10" />}</div><div><p className="text-sm font-semibold">{step.title}</p><p className="mt-0.5 text-xs text-muted-foreground">{step.text}</p></div></div>)}</div></motion.div>
-    </div>
-  </main>;
+  return (
+    <main className="mx-auto max-w-4xl px-4 py-8 sm:py-12">
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-8 max-w-2xl"
+      >
+        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-rating/20 bg-rating/10 px-3 py-1.5 text-xs font-semibold text-rating">
+          <Link2 className="h-3.5 w-3.5" /> Импорт профиля
+        </div>
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+          Перенеси свою историю кино
+        </h1>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          Сервис аккуратно перенесёт оценки и просмотренные фильмы с Кинопоиска,
+          найдёт соответствия в каталоге и обновит твои рекомендации.
+        </p>
+      </motion.div>
+      <div className="grid gap-5 lg:grid-cols-[1.15fr_.85fr]">
+        <motion.form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void start();
+          }}
+          initial={{ opacity: 0, x: -14 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.08 }}
+          className="glass-panel rounded-3xl p-5 sm:p-7"
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-rating/15 p-2.5 text-rating">
+              <Link2 className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="font-bold">Ссылка на публичный профиль</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Например: kinopoisk.ru/user/123456/
+              </p>
+            </div>
+          </div>
+          <input
+            required
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://www.kinopoisk.ru/user/123456/"
+            className="mt-6 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3.5 text-sm outline-none transition focus:border-rating/50 focus:ring-2 focus:ring-rating/20"
+          />
+          {error && (
+            <p className="mt-3 rounded-xl border border-skip/20 bg-skip/10 px-3 py-2 text-xs text-skip">
+              {error}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={!url.trim() || loading}
+            className="mt-5 inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-black transition hover:bg-rating disabled:opacity-40"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowRight className="h-4 w-4" />
+            )}{" "}
+            {loading ? "Запускаем импорт…" : "Начать импорт"}
+          </button>
+          <p className="mt-4 text-xs leading-5 text-muted-foreground">
+            Профиль должен быть открыт для просмотра. Во время импорта можно
+            закрыть вкладку — прогресс сохранится.
+          </p>
+        </motion.form>
+        <motion.div
+          initial={{ opacity: 0, x: 14 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.16 }}
+          className="rounded-3xl border border-white/10 bg-gradient-to-br from-rating/10 via-white/[.03] to-like/5 p-5 sm:p-7"
+        >
+          <Sparkles className="h-6 w-6 text-rating" />
+          <h2 className="mt-4 text-lg font-bold">Что произойдёт</h2>
+          <div className="mt-5 space-y-4">
+            {STEPS.map((step, index) => (
+              <div key={step.key} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  <div className="grid h-7 w-7 place-items-center rounded-full border border-rating/30 bg-rating/10 text-xs font-bold text-rating">
+                    {index + 1}
+                  </div>
+                  {index < STEPS.length - 1 && (
+                    <div className="mt-1 h-5 w-px bg-white/10" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">{step.title}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {step.text}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      </div>
+    </main>
+  );
 }
 
 export function ImportProgress({ jobId }: { jobId: string }) {
   const [status, setStatus] = useState<ImportStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pollRun, setPollRun] = useState(0);
-  const refreshLibrary = useAppStore(state => state.refreshLibrary);
-  useEffect(() => { let active = true; let timer: number | undefined; let synced = false; const poll = async () => { try { const next = await api.importStatus(jobId); if (!active) return; setStatus(next); setError(null); if (TERMINAL.has(next.status)) { if (["Completed", "CompletedWithWarnings"].includes(next.status) && !synced) { synced = true; await refreshLibrary().catch(() => undefined); } return; } timer = window.setTimeout(poll, next.status === "WaitingForUser" ? 3000 : 1500); } catch (cause) { if (!active) return; setError(cause instanceof Error ? cause.message : "Не удалось получить состояние"); timer = window.setTimeout(poll, 4000); } }; void poll(); return () => { active = false; if (timer) window.clearTimeout(timer); }; }, [jobId, pollRun, refreshLibrary]);
+  const refreshLibrary = useAppStore((state) => state.refreshLibrary);
+  useEffect(() => {
+    let active = true;
+    let timer: number | undefined;
+    let synced = false;
+    const poll = async () => {
+      try {
+        const next = await api.importStatus(jobId);
+        if (!active) return;
+        setStatus(next);
+        setError(null);
+        if (TERMINAL.has(next.status)) {
+          if (
+            ["Completed", "CompletedWithWarnings"].includes(next.status) &&
+            !synced
+          ) {
+            synced = true;
+            await refreshLibrary().catch(() => undefined);
+          }
+          return;
+        }
+        timer = window.setTimeout(
+          poll,
+          next.status === "WaitingForUser" ? 3000 : 1500,
+        );
+      } catch (cause) {
+        if (!active) return;
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Не удалось получить состояние",
+        );
+        timer = window.setTimeout(poll, 4000);
+      }
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [jobId, pollRun, refreshLibrary]);
   const phase = status?.phase ?? status?.status ?? "Queued";
-  const activeStep = Math.max(0, STEPS.findIndex(step => step.key === phase));
-  const progress = Math.max(0, Math.min(100, status?.overallProgress ?? status?.progress ?? 0));
-  const eta = useMemo(() => formatEta(status?.etaSeconds ?? status?.estimatedRemainingSeconds), [status?.etaSeconds, status?.estimatedRemainingSeconds]);
+  const activeStep = Math.max(
+    0,
+    STEPS.findIndex((step) => step.key === phase),
+  );
+  const progress = Math.max(
+    0,
+    Math.min(100, status?.overallProgress ?? status?.progress ?? 0),
+  );
+  const eta = useMemo(
+    () => formatEta(status?.etaSeconds ?? status?.estimatedRemainingSeconds),
+    [status?.etaSeconds, status?.estimatedRemainingSeconds],
+  );
   const isTerminal = TERMINAL.has(status?.status ?? "");
   const current = STEPS[activeStep] ?? STEPS[0];
-  return <main className="mx-auto max-w-4xl px-4 py-8 sm:py-12"><motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="inline-flex items-center gap-2 rounded-full border border-rating/20 bg-rating/10 px-3 py-1.5 text-xs font-semibold text-rating"><Film className="h-3.5 w-3.5" /> Импорт Кинопоиска</div><h1 className="mt-4 text-3xl font-bold tracking-tight">Переносим твою историю кино</h1><p className="mt-2 text-sm text-muted-foreground">Импорт сохранён на сервере и продолжится после обновления страницы.</p></div>{!isTerminal && <div className="rounded-2xl border border-white/10 bg-white/[.03] px-4 py-3 text-right"><p className="text-2xl font-black text-rating">{Math.round(progress)}%</p><p className="text-[11px] text-muted-foreground">общий прогресс</p></div>}</div></motion.div>
-    <section className="glass-panel mt-8 rounded-3xl p-5 sm:p-8"><div className="relative grid grid-cols-2 gap-4 sm:grid-cols-4">{STEPS.map((step, index) => { const done = isTerminal && ["Completed", "CompletedWithWarnings"].includes(status?.status ?? "") || index < activeStep; const activeNow = !isTerminal && index === activeStep; return <div key={step.key} className="relative z-10 text-center"><div className={cn("mx-auto grid h-12 w-12 place-items-center rounded-2xl border transition-all duration-500", done && "border-like bg-like text-black shadow-[0_0_24px_rgba(95,255,177,.2)]", activeNow && "border-rating bg-rating/15 text-rating shadow-[0_0_24px_rgba(255,205,87,.18)]", !done && !activeNow && "border-white/10 bg-white/[.03] text-muted-foreground")}>{done ? <Check className="h-5 w-5" /> : activeNow ? <Loader2 className="h-5 w-5 animate-spin" /> : <Circle className="h-4 w-4" />}</div><p className={cn("mt-3 text-xs font-semibold sm:text-sm", activeNow && "text-rating", done && "text-like")}>{step.title}</p><p className="mt-1 hidden text-[11px] text-muted-foreground sm:block">{step.text}</p>{index < STEPS.length - 1 && <div className={cn("absolute left-[calc(50%+30px)] right-[calc(-50%+30px)] top-6 hidden h-px sm:block", index < activeStep ? "bg-like" : "bg-white/10")} />}</div>; })}</div><div className="mt-9 rounded-2xl border border-white/10 bg-black/20 p-4 sm:p-5"><AnimatePresence mode="wait"><motion.div key={`${status?.status ?? "Queued"}-${progress}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} className="flex items-center gap-3"><div className="rounded-xl bg-rating/15 p-2.5 text-rating">{isTerminal ? <Check className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}</div><div><p className="text-sm font-bold">{status?.status === "WaitingForUser" ? "Нужно пройти проверку Кинопоиска" : isTerminal ? terminalTitle(status?.status) : current.title}</p><p className="mt-1 text-xs text-muted-foreground">{status?.status === "WaitingForUser" ? "Открой проверку ниже, заверши CAPTCHA и нажми «Продолжить»." : isTerminal ? "Результат импорта готов." : current.text}</p></div></motion.div></AnimatePresence><div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10"><motion.div className="h-full rounded-full bg-gradient-to-r from-rating to-like" animate={{ width: `${progress}%` }} transition={{ duration: .6 }} /></div><div className="mt-3 flex justify-between text-xs text-muted-foreground"><span>{status?.phaseProgress ? `Шаг: ${Math.round(status.phaseProgress)}%` : "Обрабатываем данные"}</span>{eta && <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {eta}</span>}</div></div><Stats status={status}/>{!isTerminal && status?.status !== "WaitingForUser" && <p className="mt-5 text-center text-xs text-muted-foreground">Не закрывай страницу, если хочешь сразу видеть обновления. Сам импорт не прервётся.</p>}{status?.status === "WaitingForUser" && <Captcha jobId={jobId} status={status} onChange={setStatus}/>} {status?.status === "Completed" && <Result ok title="Импорт завершён" text="Библиотека и персональные киноплёнки уже обновлены."/>}{status?.status === "CompletedWithWarnings" && <Result ok title="Импорт завершён с предупреждениями" text="Надёжно сопоставленные фильмы добавлены, остальные показаны в статистике."/>}{status?.status === "Failed" && <FailedResult jobId={jobId} status={status} onChange={setStatus} onResumed={() => setPollRun(value => value + 1)}/>} {status?.status === "Cancelled" && <Result title="Импорт отменён"/>}{error && <p className="mt-4 text-sm text-skip">{error}</p>}</section>
-  </main>;
+  let phaseTitle = current.title;
+  let phaseText = current.text;
+  if (isTerminal) {
+    phaseTitle = terminalTitle(status?.status);
+    phaseText = "Результат импорта готов.";
+  }
+  if (status?.status === "WaitingForUser") {
+    phaseTitle = "Нужно пройти проверку Кинопоиска";
+    phaseText = "Открой проверку ниже, заверши CAPTCHA и нажми «Продолжить».";
+  }
+  return (
+    <main className="mx-auto max-w-4xl px-4 py-8 sm:py-12">
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-rating/20 bg-rating/10 px-3 py-1.5 text-xs font-semibold text-rating">
+              <Film className="h-3.5 w-3.5" /> Импорт Кинопоиска
+            </div>
+            <h1 className="mt-4 text-3xl font-bold tracking-tight">
+              Переносим твою историю кино
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Импорт сохранён на сервере и продолжится после обновления
+              страницы.
+            </p>
+          </div>
+          {!isTerminal && (
+            <div className="rounded-2xl border border-white/10 bg-white/[.03] px-4 py-3 text-right">
+              <p className="text-2xl font-black text-rating">
+                {Math.round(progress)}%
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                общий прогресс
+              </p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+      <section className="glass-panel mt-8 rounded-3xl p-5 sm:p-8">
+        <div className="relative grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {STEPS.map((step, index) => {
+            const done =
+              (isTerminal &&
+                ["Completed", "CompletedWithWarnings"].includes(
+                  status?.status ?? "",
+                )) ||
+              index < activeStep;
+            const activeNow = !isTerminal && index === activeStep;
+            return (
+              <div key={step.key} className="relative z-10 text-center">
+                <div
+                  className={cn(
+                    "mx-auto grid h-12 w-12 place-items-center rounded-2xl border transition-all duration-500",
+                    done &&
+                      "border-like bg-like text-black shadow-[0_0_24px_rgba(95,255,177,.2)]",
+                    activeNow &&
+                      "border-rating bg-rating/15 text-rating shadow-[0_0_24px_rgba(255,205,87,.18)]",
+                    !done &&
+                      !activeNow &&
+                      "border-white/10 bg-white/[.03] text-muted-foreground",
+                  )}
+                >
+                  <StepIcon done={done} active={activeNow} />
+                </div>
+                <p
+                  className={cn(
+                    "mt-3 text-xs font-semibold sm:text-sm",
+                    activeNow && "text-rating",
+                    done && "text-like",
+                  )}
+                >
+                  {step.title}
+                </p>
+                <p className="mt-1 hidden text-[11px] text-muted-foreground sm:block">
+                  {step.text}
+                </p>
+                {index < STEPS.length - 1 && (
+                  <div
+                    className={cn(
+                      "absolute left-[calc(50%+30px)] right-[calc(-50%+30px)] top-6 hidden h-px sm:block",
+                      index < activeStep ? "bg-like" : "bg-white/10",
+                    )}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-9 rounded-2xl border border-white/10 bg-black/20 p-4 sm:p-5">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={`${status?.status ?? "Queued"}-${progress}`}
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -5 }}
+              className="flex items-center gap-3"
+            >
+              <div className="rounded-xl bg-rating/15 p-2.5 text-rating">
+                {isTerminal ? (
+                  <Check className="h-5 w-5" />
+                ) : (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                )}
+              </div>
+              <div>
+                <p className="text-sm font-bold">
+                  {phaseTitle}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {phaseText}
+                </p>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+          <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+            <motion.div
+              className="h-full rounded-full bg-gradient-to-r from-rating to-like"
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.6 }}
+            />
+          </div>
+          <div className="mt-3 flex justify-between text-xs text-muted-foreground">
+            <span>
+              {status?.phaseProgress
+                ? `Шаг: ${Math.round(status.phaseProgress)}%`
+                : "Обрабатываем данные"}
+            </span>
+            {eta && (
+              <span className="inline-flex items-center gap-1">
+                <Clock className="h-3.5 w-3.5" /> {eta}
+              </span>
+            )}
+          </div>
+        </div>
+        <Stats status={status} />
+        {!isTerminal && status?.status !== "WaitingForUser" && (
+          <p className="mt-5 text-center text-xs text-muted-foreground">
+            Не закрывай страницу, если хочешь сразу видеть обновления. Сам
+            импорт не прервётся.
+          </p>
+        )}
+        {status?.status === "WaitingForUser" && (
+          <Captcha jobId={jobId} status={status} onChange={setStatus} />
+        )}{" "}
+        {status?.status === "Completed" && (
+          <Result
+            ok
+            title="Импорт завершён"
+            text="Библиотека и персональные киноплёнки уже обновлены."
+          />
+        )}
+        {status?.status === "CompletedWithWarnings" && (
+          <Result
+            ok
+            title="Импорт завершён с предупреждениями"
+            text="Надёжно сопоставленные фильмы добавлены, остальные показаны в статистике."
+          />
+        )}
+        {status?.status === "Failed" && (
+          <FailedResult
+            jobId={jobId}
+            status={status}
+            onChange={setStatus}
+            onResumed={() => setPollRun((value) => value + 1)}
+          />
+        )}{" "}
+        {status?.status === "Cancelled" && <Result title="Импорт отменён" />}
+        {error && <p className="mt-4 text-sm text-skip">{error}</p>}
+      </section>
+    </main>
+  );
 }
 
-function Stats({ status }: { status: ImportStatus | null }) { const rows = [["Страниц", `${status?.pagesProcessed ?? 0}${status?.pagesTotal ? ` / ${status.pagesTotal}` : ""}`], ["Найдено", status?.discoveredCount ?? 0], ["Сопоставлено", status?.matchedCount ?? 0], ["Применено", status?.appliedCount ?? status?.importedCount ?? 0], ["Не найдено", status?.unmatchedCount ?? 0]]; return <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-5">{rows.map(([label, value]) => <motion.div layout key={label} className="rounded-xl border border-white/5 bg-black/20 p-3"><p className="text-lg font-bold">{value}</p><p className="text-[11px] text-muted-foreground">{label}</p></motion.div>)}</div>; }
-function Captcha({ jobId, status, onChange }: { jobId: string; status: ImportStatus; onChange: (next: ImportStatus) => void }) { const [busy, setBusy] = useState(false); return <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="mt-6 rounded-2xl border border-rating/30 bg-rating/5 p-4 sm:p-5"><h2 className="font-bold">Кинопоиск просит подтверждение</h2><p className="mt-1 text-xs text-muted-foreground">Открой интерактивную проверку, пройди CAPTCHA и вернись сюда.</p>{status.captcha?.screenshotBase64 && <img className="mt-4 max-h-56 w-full rounded-xl border border-white/10 object-contain" alt="Состояние проверки" src={`data:${status.captcha.screenshotMimeType ?? "image/png"};base64,${status.captcha.screenshotBase64}`}/>}<div className="mt-4 flex flex-wrap gap-2">{status.captcha?.novncUrl && <a href={status.captcha.novncUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-rating px-4 py-2.5 text-xs font-bold text-black"><ExternalLink className="h-3.5 w-3.5" /> Открыть проверку</a>}<button disabled={busy} onClick={async () => { setBusy(true); try { onChange(await api.importResume(jobId)); } finally { setBusy(false); } }} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-black"><RotateCcw className="h-3.5 w-3.5" /> Продолжить</button><button onClick={async () => onChange(await api.importCancel(jobId))} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold"><X className="h-3.5 w-3.5" /> Отменить</button></div></motion.div>; }
-function FailedResult({ jobId, status, onChange, onResumed }: { jobId: string; status: ImportStatus; onChange: (next: ImportStatus) => void; onResumed: () => void }) { const [busy, setBusy] = useState(false); const [retryError, setRetryError] = useState<string | null>(null); return <div className="mt-6 rounded-2xl border border-skip/30 bg-skip/10 p-4"><h2 className="font-bold">Импорт остановлен</h2><p className="mt-1 text-sm text-muted-foreground">{status.error ?? "Кинопоиск вернул неожиданные данные."}</p><button disabled={busy} onClick={async () => { setBusy(true); setRetryError(null); try { onChange(await api.importResume(jobId)); onResumed(); } catch (cause) { setRetryError(cause instanceof Error ? cause.message : "Не удалось продолжить импорт"); } finally { setBusy(false); } }} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-black"><RotateCcw className={cn("h-3.5 w-3.5", busy && "animate-spin")} /> {busy ? "Продолжаем…" : "Продолжить импорт"}</button>{retryError && <p className="mt-2 text-xs text-skip">{retryError}</p>}</div>; }
-function Result({ ok, title, text }: { ok?: boolean; title: string; text?: string }) { return <div className={cn("mt-6 rounded-2xl border p-4", ok ? "border-like/30 bg-like/10" : "border-skip/30 bg-skip/10")}><h2 className="font-bold">{title}</h2>{text && <p className="mt-1 text-sm text-muted-foreground">{text}</p>}</div>; }
-function terminalTitle(status?: string) { return status === "CompletedWithWarnings" ? "Импорт завершён с предупреждениями" : status === "Cancelled" ? "Импорт отменён" : status === "Failed" ? "Импорт остановлен" : "Импорт завершён"; }
-function formatEta(seconds?: number | null) { if (!seconds || seconds <= 0) return null; return seconds < 60 ? `около ${Math.ceil(seconds)} с` : `около ${Math.ceil(seconds / 60)} мин`; }
+function Stats({ status }: { status: ImportStatus | null }) {
+  const pageCount = status?.pagesProcessed ?? 0;
+  const pageLabel = status?.pagesTotal ? `${pageCount} / ${status.pagesTotal}` : String(pageCount);
+  const rows = [
+    [
+      "Страниц",
+      pageLabel,
+    ],
+    ["Найдено", status?.discoveredCount ?? 0],
+    ["Сопоставлено", status?.matchedCount ?? 0],
+    ["Применено", status?.appliedCount ?? status?.importedCount ?? 0],
+    ["Не найдено", status?.unmatchedCount ?? 0],
+  ];
+  return (
+    <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      {rows.map(([label, value]) => (
+        <motion.div
+          layout
+          key={label}
+          className="rounded-xl border border-white/5 bg-black/20 p-3"
+        >
+          <p className="text-lg font-bold">{value}</p>
+          <p className="text-[11px] text-muted-foreground">{label}</p>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+function Captcha({
+  jobId,
+  status,
+  onChange,
+}: {
+  jobId: string;
+  status: ImportStatus;
+  onChange: (next: ImportStatus) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      className="mt-6 rounded-2xl border border-rating/30 bg-rating/5 p-4 sm:p-5"
+    >
+      <h2 className="font-bold">Кинопоиск просит подтверждение</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Открой интерактивную проверку, пройди CAPTCHA и вернись сюда.
+      </p>
+      {status.captcha?.screenshotBase64 && (
+        <img
+          className="mt-4 max-h-56 w-full rounded-xl border border-white/10 object-contain"
+          alt="Состояние проверки"
+          src={`data:${status.captcha.screenshotMimeType ?? "image/png"};base64,${status.captcha.screenshotBase64}`}
+        />
+      )}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {status.captcha?.novncUrl && (
+          <a
+            href={status.captcha.novncUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-xl bg-rating px-4 py-2.5 text-xs font-bold text-black"
+          >
+            <ExternalLink className="h-3.5 w-3.5" /> Открыть проверку
+          </a>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              onChange(await api.importResume(jobId));
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-black"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Продолжить
+        </button>
+        <button
+          type="button"
+          onClick={async () => onChange(await api.importCancel(jobId))}
+          className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold"
+        >
+          <X className="h-3.5 w-3.5" /> Отменить
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+function FailedResult({
+  jobId,
+  status,
+  onChange,
+  onResumed,
+}: {
+  jobId: string;
+  status: ImportStatus;
+  onChange: (next: ImportStatus) => void;
+  onResumed: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  return (
+    <div className="mt-6 rounded-2xl border border-skip/30 bg-skip/10 p-4">
+      <h2 className="font-bold">Импорт остановлен</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {status.error ?? "Кинопоиск вернул неожиданные данные."}
+      </p>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setRetryError(null);
+          try {
+            onChange(await api.importResume(jobId));
+            onResumed();
+          } catch (cause) {
+            setRetryError(
+              cause instanceof Error
+                ? cause.message
+                : "Не удалось продолжить импорт",
+            );
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="mt-4 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-black"
+      >
+        <RotateCcw className={cn("h-3.5 w-3.5", busy && "animate-spin")} />{" "}
+        {busy ? "Продолжаем…" : "Продолжить импорт"}
+      </button>
+      {retryError && <p className="mt-2 text-xs text-skip">{retryError}</p>}
+    </div>
+  );
+}
+function Result({
+  ok,
+  title,
+  text,
+}: {
+  ok?: boolean;
+  title: string;
+  text?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "mt-6 rounded-2xl border p-4",
+        ok ? "border-like/30 bg-like/10" : "border-skip/30 bg-skip/10",
+      )}
+    >
+      <h2 className="font-bold">{title}</h2>
+      {text && <p className="mt-1 text-sm text-muted-foreground">{text}</p>}
+    </div>
+  );
+}
+function terminalTitle(status?: string) {
+  if (status === "CompletedWithWarnings") return "Импорт завершён с предупреждениями";
+  if (status === "Cancelled") return "Импорт отменён";
+  if (status === "Failed") return "Импорт остановлен";
+  return "Импорт завершён";
+}
+function StepIcon({ done, active }: { done: boolean; active: boolean }) {
+  if (done) return <Check className="h-5 w-5" />;
+  if (active) return <Loader2 className="h-5 w-5 animate-spin" />;
+  return <Circle className="h-4 w-4" />;
+}
+function formatEta(seconds?: number | null) {
+  if (!seconds || seconds <= 0) return null;
+  return seconds < 60
+    ? `около ${Math.ceil(seconds)} с`
+    : `около ${Math.ceil(seconds / 60)} мин`;
+}

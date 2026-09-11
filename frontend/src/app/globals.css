@@ -234,3 +234,15 @@ select optgroup {
   color: oklch(0.85 0 0);
   font-weight: 600;
 }
+
+.admin-input {
+  width: 100%;
+  min-height: 2.5rem;
+  border: 1px solid oklch(1 0 0 / 10%);
+  border-radius: 0.65rem;
+  background: oklch(0 0 0 / 20%);
+  padding: 0.55rem 0.7rem;
+  color: inherit;
+  outline: none;
+}
+.admin-input:focus { border-color: oklch(0.82 0.17 85 / 70%); box-shadow: 0 0 0 3px oklch(0.82 0.17 85 / 12%); }

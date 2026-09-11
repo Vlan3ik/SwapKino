@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.AspNetCore.Identity;
@@ -16,12 +17,26 @@ using StackExchange.Redis;
 namespace SwapKino.Api;
 [ApiController]
 [Route("api/v1")]
-public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users, SignInManager<User> signIn, IConfiguration config, IDistributedCache cache, IConnectionMultiplexer redis, IHttpClientFactory http, TmdbClient tmdb, VibixClient vibix, AvatarStorage avatars, RecommendationGateway gateway, ILogger<ApiController> log) : ControllerBase
+public sealed class ApiController(SwapKinoDbContext db, ApiAuthServices auth, ApiExternalServices external) : ControllerBase
 {
-    private static readonly JsonSerializerOptions CacheJsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly int[] PsychologicalGenreIds = [18, 53, 9648, 27, 80];
+    private UserManager<User> users => auth.Users;
+    private SignInManager<User> signIn => auth.SignIn;
+    private IConfiguration config => auth.Config;
+    private IConnectionMultiplexer redis => external.Redis;
+    private IHttpClientFactory http => external.Http;
+    private TmdbCardGateway tmdbCards => external.TmdbCards;
+    private VibixClient vibix => external.Vibix;
+    private AvatarStorage avatars => external.Avatars;
+    private ProductRecommendationService productRecommendations => external.ProductRecommendations;
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-    private string Token(User user) { var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256); return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims:[new Claim(ClaimTypes.NameIdentifier,user.Id.ToString()),new Claim(ClaimTypes.Email,user.Email!)],expires:DateTime.UtcNow.AddHours(2),signingCredentials:creds)); }
+    private async Task<(string Token, string[] Roles)> Token(User user)
+    {
+        var roles = (await users.GetRolesAsync(user)).ToArray();
+        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, user.Id.ToString()), new(ClaimTypes.Email, user.Email!) };
+        claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
+        var key=new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["JWT_SECRET"]!)); var creds=new SigningCredentials(key,SecurityAlgorithms.HmacSha256);
+        return (new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(claims: claims, expires:DateTime.UtcNow.AddHours(2),signingCredentials:creds)), roles);
+    }
     private async Task<string> CreateRefreshSession(User user, CancellationToken ct)
     {
         var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
@@ -34,11 +49,21 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     private async Task<IActionResult> AuthResponse(User user, CancellationToken ct, int statusCode = StatusCodes.Status200OK)
     {
         await CreateRefreshSession(user, ct);
-        return StatusCode(statusCode, new { accessToken = Token(user), user = new { id = user.Id, email = user.Email, displayName = user.DisplayName, avatarUrl = user.AvatarUrl, createdAt = user.CreatedAt } });
+        var token = await Token(user);
+        return StatusCode(statusCode, new { accessToken = token.Token, user = new { id = user.Id, email = user.Email, displayName = user.DisplayName, avatarUrl = user.AvatarUrl, createdAt = user.CreatedAt, roles = token.Roles } });
     }
     [HttpPost("auth/register")][EnableRateLimiting("auth")]
     [ProducesResponseType(StatusCodes.Status201Created)]
-    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct) { if (!request.PrivacyConsent) return BadRequest(new { message = "Необходимо согласие на обработку персональных данных" }); if(await users.FindByEmailAsync(request.Email) is not null)return Conflict(new{message="Email already registered"}); var u=new User{UserName=request.Email,Email=request.Email,DisplayName=request.DisplayName,PrivacyConsentAt=DateTime.UtcNow,PrivacyConsentVersion="2026-08-10"}; var result=await users.CreateAsync(u,request.Password); if(!result.Succeeded)return BadRequest(new { message = string.Join(" ", result.Errors.Select(error => error.Description)), errors = result.Errors }); await db.SaveChangesAsync(ct); return await AuthResponse(u, ct, StatusCodes.Status201Created); }
+    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct)
+    {
+        if (request.PrivacyConsent != true) return BadRequest(new { message = "Необходимо согласие на обработку персональных данных" });
+        if (await users.FindByEmailAsync(request.Email) is not null) return Conflict(new { message = "Email already registered" });
+        var user = new User { UserName = request.Email, Email = request.Email, DisplayName = request.DisplayName, PrivacyConsentAt = DateTime.UtcNow, PrivacyConsentVersion = "2026-08-10" };
+        var result = await users.CreateAsync(user, request.Password);
+        if (!result.Succeeded) return BadRequest(new { message = string.Join(" ", result.Errors.Select(error => error.Description)), errors = result.Errors });
+        await db.SaveChangesAsync(ct);
+        return await AuthResponse(user, ct, StatusCodes.Status201Created);
+    }
     [HttpPost("auth/login")][EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct)
     {
@@ -74,7 +99,13 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         return NoContent();
     }
     [HttpGet("auth/me")][Authorize]
-    public async Task<IActionResult> Me() { var user=await users.FindByIdAsync(UserId.ToString()); return user is null?Unauthorized():Ok(new{id=user.Id,email=user.Email,displayName=user.DisplayName,avatarUrl=user.AvatarUrl,createdAt=user.CreatedAt}); }
+    public async Task<IActionResult> Me()
+    {
+        var user = await users.FindByIdAsync(UserId.ToString());
+        if (user is null) return Unauthorized();
+        var roles = await users.GetRolesAsync(user);
+        return Ok(new { id = user.Id, email = user.Email, displayName = user.DisplayName, avatarUrl = user.AvatarUrl, createdAt = user.CreatedAt, roles });
+    }
 
     [HttpPatch("profile")][Authorize]
     public async Task<IActionResult> UpdateProfile(ProfileUpdateRequest request, CancellationToken ct)
@@ -83,18 +114,25 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         if (user is null) return Unauthorized();
         var displayName = request.DisplayName?.Trim();
         if (displayName is not null && displayName.Length > 80) return BadRequest(new { message = "Имя не должно быть длиннее 80 символов" });
-        if (request.AvatarUrl is not null)
-        {
-            var avatar = request.AvatarUrl.Trim();
-            if (avatar.Length > 500) return BadRequest(new { message = "Ссылка на аватар слишком длинная" });
-            if (avatar.Length > 0 && (!Uri.TryCreate(avatar, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)))
-                return BadRequest(new { message = "Аватар должен быть ссылкой на изображение" });
-            user.AvatarUrl = avatar.Length == 0 ? null : avatar;
-        }
-        if (displayName is not null) user.DisplayName = displayName.Length == 0 ? null : displayName;
+        var avatarError = ApplyAvatar(user, request.AvatarUrl);
+        if (avatarError is not null) return BadRequest(new { message = avatarError });
+        if (displayName is not null) user.DisplayName = NullIfEmpty(displayName);
         await db.SaveChangesAsync(ct);
         return Ok(new { id = user.Id, email = user.Email, displayName = user.DisplayName, avatarUrl = user.AvatarUrl, createdAt = user.CreatedAt });
     }
+
+    private static string? ApplyAvatar(User user, string? value)
+    {
+        if (value is null) return null;
+        var avatar = value.Trim();
+        if (avatar.Length > 500) return "Ссылка на аватар слишком длинная";
+        if (avatar.Length > 0 && (!Uri.TryCreate(avatar, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)))
+            return "Аватар должен быть ссылкой на изображение";
+        user.AvatarUrl = NullIfEmpty(avatar);
+        return null;
+    }
+
+    private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 
     [HttpPost("profile/avatar")][Authorize][RequestSizeLimit(6_000_000)]
     public async Task<IActionResult> UploadAvatar(IFormFile? file, CancellationToken ct)
@@ -148,7 +186,6 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         db.UserExternalItems.RemoveRange(db.UserExternalItems.Where(x => x.UserId == UserId));
         db.ImportJobs.RemoveRange(db.ImportJobs.Where(x => x.UserId == UserId));
         db.RefreshSessions.RemoveRange(db.RefreshSessions.Where(x => x.UserId == UserId));
-        db.OutboxEvents.Add(new OutboxEvent { Topic = "recommendations.user.deleted", Payload = JsonSerializer.Serialize(new { userId = UserId }) });
         var result = await users.DeleteAsync(user);
         if (!result.Succeeded) return Problem("Не удалось удалить аккаунт");
         await db.SaveChangesAsync(ct);
@@ -167,8 +204,8 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var watchedCount = await states.CountAsync(x => x.Watched, ct);
         var libraryCount = await states.CountAsync(ct);
         var averageRating = await states.Where(x => x.Rating != null).Select(x => x.Rating).AverageAsync(ct) ?? 0;
-        var favoritePreview = await LibraryItems(states.Where(x => x.Favorite), "recent", 5, ct);
-        var ratingPreview = await LibraryItems(states.Where(x => x.Rating != null), "rating", 5, ct);
+        var favoritePreview = await LibraryPreviewFromTmdb(states.Where(x => x.Favorite), 5, ct);
+        var ratingPreview = await LibraryPreviewFromTmdb(states.Where(x => x.Rating != null), 5, ct);
         return Ok(new
         {
             user = new { id = user.Id, email = user.Email, displayName = user.DisplayName, avatarUrl = user.AvatarUrl, createdAt = user.CreatedAt },
@@ -177,12 +214,44 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         });
     }
 
+    private async Task<object[]> LibraryPreviewFromTmdb(IQueryable<UserMovieState> states, int limit, CancellationToken ct)
+    {
+        var rows = await states.OrderByDescending(x => x.UpdatedAt).Take(limit).ToListAsync(ct);
+        var loaded = await Task.WhenAll(rows.Select(async state => new { state.TmdbId, state.IsSeries, state.Rating, state.Favorite, state.Watched, state.UpdatedAt, json = await tmdbCards.GetAsync(new ProductDeckItem(state.TmdbId, state.IsSeries), ct) }));
+        return loaded.Select(x => (object)new { x.TmdbId, x.IsSeries, x.Rating, x.Favorite, x.Watched, x.UpdatedAt, movie = TmdbCardGateway.Card(x.json, new ProductDeckItem(x.TmdbId, x.IsSeries)) }).ToArray();
+    }
+
     [HttpGet("favorites")][Authorize]
-    public Task<IActionResult> Favorites([FromQuery] LibraryQuery query, CancellationToken ct) => UserLibrary(query, favorite: true, ct);
+    public Task<IActionResult> Favorites([FromQuery] LibraryQuery query, CancellationToken ct) => UserLibraryFromTmdb(query, favorite: true, ct);
 
     [HttpGet("ratings")][Authorize]
-    public Task<IActionResult> Ratings([FromQuery] LibraryQuery query, CancellationToken ct) => UserLibrary(query, favorite: false, ct);
+    public Task<IActionResult> Ratings([FromQuery] LibraryQuery query, CancellationToken ct) => UserLibraryFromTmdb(query, favorite: false, ct);
 
+    private async Task<IActionResult> UserLibraryFromTmdb(LibraryQuery request, bool favorite, CancellationToken ct)
+    {
+        if (request.Limit is < 1 or > 50) return ValidationProblem("Limit должен быть от 1 до 50");
+        if (request.Page is < 1 or > 500) return ValidationProblem("Страница должна быть от 1 до 500");
+        var rows = await db.UserMovieStates.AsNoTracking().Where(x => x.UserId == UserId && (favorite ? x.Favorite : x.Rating != null) && (request.IsSeries == null || x.IsSeries == request.IsSeries)).OrderByDescending(x => x.UpdatedAt).Take(500).ToListAsync(ct);
+        var cards = await Task.WhenAll(rows.Select(async state => (state, json: await tmdbCards.GetAsync(new ProductDeckItem(state.TmdbId, state.IsSeries), ct))));
+        var filtered = cards.Where(x => MatchesLibraryFilter(x.json, request)).ToList();
+        var totalCount = filtered.Count; var pageRows = filtered.Skip((request.Page - 1) * request.Limit).Take(request.Limit).ToArray();
+        var items = pageRows.Select(x => new { x.state.TmdbId, x.state.IsSeries, x.state.Rating, x.state.Favorite, x.state.Watched, x.state.UpdatedAt, movie = TmdbCardGateway.Card(x.json, new ProductDeckItem(x.state.TmdbId, x.state.IsSeries)) }).ToArray();
+        return Ok(new { items, page = request.Page, pageSize = request.Limit, totalCount, totalPages = (int)Math.Ceiling(totalCount / (double)request.Limit), hasNextPage = request.Page * request.Limit < totalCount, nextCursor = request.Page * request.Limit < totalCount ? (request.Page + 1).ToString() : null });
+    }
+
+    private static bool MatchesLibraryFilter(JsonElement card, LibraryQuery request)
+    {
+        var title = card.TryGetProperty("title", out var titleNode) ? titleNode.GetString() ?? "" : "";
+        if (!string.IsNullOrWhiteSpace(request.Q) && !title.Contains(request.Q.Trim(), StringComparison.OrdinalIgnoreCase)) return false;
+        if (request.MinRating is double min && (!card.TryGetProperty("vote_average", out var rating) || !rating.TryGetDouble(out var value) || value < min)) return false;
+        var requestedGenres = ParseGenreIds(request.GenreIds);
+        if (requestedGenres.Length > 0 && (!card.TryGetProperty("genres", out var genres) || !genres.EnumerateArray().Any(x => x.TryGetProperty("id", out var id) && requestedGenres.Contains(id.GetInt32())))) return false;
+        return true;
+    }
+
+    private static int[] ParseGenreIds(string? value) => (value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(x => int.TryParse(x, out var id) ? id : 0).Where(x => x > 0).Distinct().ToArray();
+
+    #if LEGACY_CATALOG
     private async Task<IActionResult> UserLibrary(LibraryQuery request, bool favorite, CancellationToken ct)
     {
         if (request.Limit is < 1 or > 50) return ValidationProblem("Limit должен быть от 1 до 50");
@@ -224,7 +293,9 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var nextCursor = hasNext && rows.Count > 0 ? MakeLibraryCursor(rows[^1], sort, movies) : null;
         return Ok(new { items, page = request.Page, pageSize = request.Limit, totalCount, totalPages = (int)Math.Ceiling(totalCount / (double)request.Limit), hasNextPage = hasNext, nextCursor });
     }
+    #endif
 
+    #if LEGACY_CATALOG
     private async Task<object[]> LibraryItems(IQueryable<UserMovieState> states, string sort, int limit, CancellationToken ct)
     {
         var rows = await states.OrderByDescending(x => x.UpdatedAt).Take(limit).ToListAsync(ct);
@@ -249,70 +320,38 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var movie = movies.FirstOrDefault(x => x.TmdbId == state.TmdbId && x.IsSeries == state.IsSeries);
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new LibraryCursor(state.UpdatedAt, state.Rating, movie?.Title, state.TmdbId, state.IsSeries))));
     }
+    #endif
 
     [HttpGet("movies")][AllowAnonymous]
-    public async Task<IActionResult> Movies([FromQuery]string? cursor=null,[FromQuery]int limit=20,[FromQuery]int page=0,[FromQuery]string? q=null,[FromQuery]string? genreIds=null,[FromQuery]double? minRating=null,[FromQuery]int? yearFrom=null,[FromQuery]int? yearTo=null,[FromQuery]bool? isSeries=null,[FromQuery]string sort="popular",CancellationToken ct=default)
+    public async Task<IActionResult> Movies([FromQuery] MovieQuery query, CancellationToken ct)
     {
-        if (limit is < 1 or > 50) return ValidationProblem("Limit должен быть от 1 до 50");
-        var after=ParseCatalogCursor(cursor);if(cursor is not null&&after is null)return ValidationProblem("Некорректный cursor");
-        var genres = (genreIds ?? "").Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries).Select(x=>int.TryParse(x,out var id)?id:0).Where(x=>x>0).Distinct().ToArray();
-        var query=db.Movies.AsNoTracking().AsQueryable();
-        if(isSeries is not null)query=query.Where(x=>x.IsSeries==isSeries);
-        if(!string.IsNullOrWhiteSpace(q)){var term=q.Trim().ToLower();query=query.Where(x=>x.Title.ToLower().Contains(term)||(x.OriginalTitle!=null&&x.OriginalTitle.ToLower().Contains(term)));}
-        if(genres.Length>0)query=query.Where(x=>x.MovieGenres.Any(g=>genres.Contains(g.GenreId)));
-        if(minRating is not null)query=query.Where(x=>x.VoteAverage>=minRating&&x.VoteCount>0);
-        if(yearFrom is not null)query=query.Where(x=>x.ReleaseDate!=null&&string.Compare(x.ReleaseDate,yearFrom+"-01-01")>=0);
-        if(yearTo is not null)query=query.Where(x=>x.ReleaseDate!=null&&string.Compare(x.ReleaseDate,yearTo+"-12-31")<=0);
-        var totalCount=await query.CountAsync(ct);
-        if(after is not null)
-        {
-            var a=after;
-            query=sort switch
-            {
-                "rating"=>query.Where(x=>x.VoteAverage<a.Number || x.VoteAverage==a.Number && (x.VoteCount<a.Votes || x.VoteCount==a.Votes && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries))),
-                "newest"=>query.Where(x=>string.Compare(x.ReleaseDate,a.Text)<0 || x.ReleaseDate==a.Text && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries)),
-                "oldest"=>query.Where(x=>string.Compare(x.ReleaseDate,a.Text)>0 || x.ReleaseDate==a.Text && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries)),
-                "title"=>query.Where(x=>string.Compare(x.Title,a.Text)>0 || x.Title==a.Text && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries)),
-                _=>query.Where(x=>x.Popularity<a.Number || x.Popularity==a.Number && (x.VoteCount<a.Votes || x.VoteCount==a.Votes && (x.TmdbId>a.Id || x.TmdbId==a.Id && x.IsSeries && !a.IsSeries)))
-            };
-        }
-        query=sort switch {"rating"=>query.OrderByDescending(x=>x.VoteAverage).ThenByDescending(x=>x.VoteCount).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries),"newest"=>query.OrderByDescending(x=>x.ReleaseDate).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries),"oldest"=>query.OrderBy(x=>x.ReleaseDate).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries),"title"=>query.OrderBy(x=>x.Title).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries),_=>query.OrderByDescending(x=>x.Popularity).ThenByDescending(x=>x.VoteCount).ThenBy(x=>x.TmdbId).ThenBy(x=>x.IsSeries)};
-        var rows=await LightweightMovies(query.Skip(page>1?(page-1)*limit:0).Take(limit+1)).ToListAsync(ct);var hasNext=rows.Count>limit;if(hasNext)rows.RemoveAt(rows.Count-1);
-        var next=hasNext&&rows.Count>0?MakeCatalogCursor(rows[^1],sort):null;
-        var items=rows.Select(MovieDto.Summary).ToArray();
-        return Ok(new{items,totalCount,nextCursor=next,results=items,pageSize=limit});
+        if (query.Limit is < 1 or > 50) return ValidationProblem("Limit должен быть от 1 до 50");
+        var page = Math.Max(1, query.Page);
+        if (!string.IsNullOrWhiteSpace(query.Cursor) && int.TryParse(query.Cursor, out var cursorPage)) page = Math.Max(1, cursorPage);
+        var (results, totalCount) = await tmdbCards.ListAsync(new TmdbListRequest(query.IsSeries ?? false, query.Q, page, query.GenreIds, query.MinRating, query.YearFrom, query.YearTo, query.Sort), ct);
+        var items = results.Select(x => TmdbCardGateway.Card(x, new ProductDeckItem(x.GetProperty("id").GetInt32(), query.IsSeries ?? false))).ToArray();
+        return Ok(new { items, totalCount, nextCursor = page * query.Limit < totalCount ? (page + 1).ToString() : null, results = items, page, pageSize = items.Length });
     }
     [HttpGet("movies/{id:int}")]
     [AllowAnonymous]
     public async Task<IActionResult> Movie(int id,[FromQuery]bool isSeries=false,CancellationToken ct=default)
     {
-        var movie=await db.Movies.Include(x=>x.MovieGenres).ThenInclude(x=>x.Genre).SingleOrDefaultAsync(x=>x.TmdbId==id&&x.IsSeries==isSeries,ct);
-        if(movie is null)return NotFound(new{message="Фильм или сериал не найден в каталоге"});
-        if(movie.DetailsState!="ready"||movie.DetailsUpdatedAt<DateTime.UtcNow.AddDays(-30))
-        {
-            try{movie=await tmdb.Details(id,ct,isSeries);}
-            catch(Exception ex)when(ex is HttpRequestException or JsonException)
-            {
-                // Summary всё ещё полезен: карточка покажет доступные данные и
-                // enrichment-service повторит запрос с контролируемым retry.
-            }
-        }
-        return Ok(MovieDto.Details(movie));
+        try { return Ok(TmdbCardGateway.Card(await tmdbCards.GetAsync(new ProductDeckItem(id, isSeries), ct), new ProductDeckItem(id, isSeries))); }
+        catch (HttpRequestException) { return NotFound(new { message = "Фильм или сериал не найден в TMDB" }); }
     }
     [HttpGet("movies/{id:int}/players")]
     [AllowAnonymous]
     public async Task<IActionResult> MoviePlayers(int id, [FromQuery] bool isSeries = false, CancellationToken ct = default)
     {
-        var movie = await db.Movies.AsNoTracking().SingleOrDefaultAsync(x => x.TmdbId == id && x.IsSeries == isSeries, ct);
-        if (movie is null) return NotFound(new { message = "Фильм или сериал не найден в каталоге" });
-        if (movie.DetailsState != "ready")
-        {
-            try { movie = await tmdb.Details(id, ct, isSeries); }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException) { }
-        }
+        JsonElement details;
+        try { details = await tmdbCards.GetAsync(new ProductDeckItem(id, isSeries), ct); }
+        catch (HttpRequestException) { return NotFound(new { message = "Фильм или сериал не найден в TMDB" }); }
+        var externalIdsElement = details.TryGetProperty("external_ids", out var externalIds) ? externalIds : default;
+        int? kp = externalIdsElement.ValueKind == JsonValueKind.Object && externalIdsElement.TryGetProperty("kinopoisk_id", out var kpNode) && kpNode.TryGetInt32(out var kpValue) ? kpValue : null;
+        var imdb = externalIdsElement.ValueKind == JsonValueKind.Object && externalIdsElement.TryGetProperty("imdb_id", out var imdbNode) ? imdbNode.GetString() : null;
         try
         {
-            var lookup = await vibix.FindAsync(movie, ct);
+            var lookup = await vibix.FindAsync(kp, imdb, ct);
             var video = lookup.Video;
             var available = video is not null;
             return Ok(new { items = new[] { new { provider = "vibix", name = "Vibix", embedUrl = video?.IframeUrl, embed = video?.Embed, status = lookup.Status, available } } });
@@ -324,8 +363,11 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     }
     [HttpGet("recommendations")]
     [Authorize]
-    public async Task<IActionResult> Recommendations([FromQuery]int page=1, CancellationToken ct=default)
+    public IActionResult Recommendations([FromQuery]int page=1, CancellationToken ct=default)
     {
+        return StatusCode(StatusCodes.Status410Gone, new { message = "Используйте киноплёнки: /api/v1/filmstrips/{slug}/feed" });
+        #pragma warning disable CS0162
+        #if LEGACY_CATALOG
         if(page is <1 or >500)return ValidationProblem("Страница должна быть от 1 до 500");
         IReadOnlyList<MovieKey> personalized = [];
         try { personalized = await gateway.GetRecommendationsAsync(UserId, "", Math.Min(100, page * 20), ct); }
@@ -347,31 +389,79 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var movies = await LightweightMovies(db.Movies.AsNoTracking().Where(x => ids.Contains(x.TmdbId))).ToListAsync(ct);
         var results = keys.Select(key => movies.FirstOrDefault(x => x.TmdbId == key.TmdbId && x.IsSeries == key.IsSeries)).Where(x => x is not null).Select(x => MovieDto.Summary(x!));
         return Ok(new{page,results});
+        #endif
+    }
+
+    [HttpGet("filmstrips")][AllowAnonymous]
+    public async Task<IActionResult> ProductFilmstrips(CancellationToken ct)
+    {
+        var strips = await db.Filmstrips.AsNoTracking().Include(x => x.Features).Include(x => x.References).Where(x => x.Status == "published").OrderBy(x => x.CreatedAt).ToListAsync(ct);
+        var viewer = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var viewerId) ? viewerId : (Guid?)null;
+        var taste = viewer is Guid uid ? await db.UserTasteFeatures.AsNoTracking().Where(x => x.UserId == uid).ToListAsync(ct) : [];
+        if (taste.Count > 0) strips = strips.OrderByDescending(strip => strip.Features.Sum(feature => taste.Where(x => x.FeatureType == feature.FeatureType && x.TmdbFeatureId == feature.TmdbFeatureId).Sum(x => x.Weight * x.Confidence) * feature.Weight)).ThenBy(x => x.CreatedAt).ToList();
+        var items = new List<object>();
+        foreach (var strip in strips)
+        {
+            string? cover = null;
+            if (strip.References.Count > 0)
+            {
+                try { var refs = strip.References.ToArray(); cover = TmdbCardGateway.PosterUrl(await tmdbCards.GetAsync(new ProductDeckItem(refs[Random.Shared.Next(refs.Length)].TmdbId, strip.IsSeries), ct)); } catch (HttpRequestException) { cover = null; }
+            }
+            items.Add(new { id = strip.Id, slug = strip.Slug, title = strip.Name, description = (string?)null, subtitle = strip.IsSeries ? "Сериалы" : "Фильмы", strategy = "tmdb", coverUrl = cover });
+        }
+        return Ok(new { items });
+    }
+
+    [HttpGet("filmstrips/{slug}/feed")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ProductFilmstripFeed(string slug, [FromQuery] string? sessionId = null, [FromQuery] string? cursor = null, [FromQuery] int offset = 0, [FromQuery] int limit = 20, CancellationToken ct = default)
+    {
+        if (offset < 0 || limit is < 1 or > 50) return ValidationProblem("Некорректные offset или limit");
+        // Browsers/proxies may pass an already percent-encoded route segment.
+        // Normalize it before looking up the database slug.
+        slug = Uri.UnescapeDataString(slug);
+        var session = string.IsNullOrWhiteSpace(sessionId) ? Guid.NewGuid().ToString("N") : sessionId;
+        try
+        {
+            if (int.TryParse(cursor, out var cursorOffset)) offset = cursorOffset;
+            var viewer = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var parsedUser) ? parsedUser : (Guid?)null;
+            var deck = await productRecommendations.GetDeckAsync(viewer, slug, session, ct);
+            // The product promise is an endless filmstrip. Once the unique
+            // recommendation deck is exhausted, continue from its beginning.
+            var first = deck.Count == 0
+                ? Array.Empty<ProductDeckItem>()
+                : Enumerable.Range(0, limit).Select(index => deck[(offset + index) % deck.Count]).ToArray();
+            var rawCards = await Task.WhenAll(first.Select(x => tmdbCards.GetAsync(x, ct)));
+            var cards = rawCards.Select((x, index) => TmdbCardGateway.Card(x, first[index])).ToArray();
+            var strip = await db.Filmstrips.AsNoTracking().Include(x => x.References).SingleOrDefaultAsync(x => x.Slug == slug, ct);
+            string? coverUrl = null;
+            if (strip?.References.Count > 0) { try { var refs = strip.References.ToArray(); coverUrl = TmdbCardGateway.PosterUrl(await tmdbCards.GetAsync(new ProductDeckItem(refs[Random.Shared.Next(refs.Length)].TmdbId, strip.IsSeries), ct)); } catch (HttpRequestException) { coverUrl = null; } }
+            var reelTitle = strip?.Name ?? slug;
+            var reelSlug = strip?.Slug ?? slug;
+            string? reelSubtitle = null;
+            if (strip is not null) reelSubtitle = strip.IsSeries ? "Сериалы" : "Фильмы";
+            var reel = new { slug = reelSlug, title = reelTitle, description = (string?)null, subtitle = reelSubtitle, strategy = (string?)"tmdb", coverUrl };
+            var nextCursor = deck.Count == 0 ? null : (offset + limit).ToString();
+            return Ok(new { reel, feedSessionId = session, items = cards, keys = first, nextCursor });
+        }
+        catch (KeyNotFoundException) { return NotFound(new { message = "Киноплёнка не найдена или не опубликована" }); }
     }
     [HttpPost("actions")]
     [Authorize]
     public async Task<IActionResult> Action(ActionRequest request,CancellationToken ct)
     {
-        var allowed = new[] { "impression", "favorite", "unfavorite", "rate", "rating", "unrate", "skip", "swipe_left", "swipe_right", "not_interested", "watched", "unwatched", "more_like_this", "less_like_this", "not_for_me", "already_watched", "rate_inline" };
-        if (request.TmdbId <= 0 || !allowed.Contains(request.ActionType, StringComparer.Ordinal))
-            return ValidationProblem("Некорректный тип действия или идентификатор фильма");
-        if (request.IdempotencyKey is null || request.IdempotencyKey.Length is < 1 or > 100)
-            return ValidationProblem("IdempotencyKey должен содержать от 1 до 100 символов");
-        if ((request.ActionType is "rate" or "rating" or "rate_inline") && (request.Value is null || request.Value < 1 || request.Value > 10))
-            return ValidationProblem("Оценка должна быть от 1 до 10");
+        var validationError = ValidateAction(request);
+        if (validationError is not null) return ValidationProblem(validationError);
+        var isSeries = request.IsSeries ?? false;
 
         var old = await db.UserActions.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == UserId && x.IdempotencyKey == request.IdempotencyKey, ct);
         if (old is not null) return Ok(new { id = old.Id, duplicate = true });
-        if (!await db.Movies.AnyAsync(x => x.TmdbId == request.TmdbId && x.IsSeries == request.IsSeries, ct)) return NotFound(new { message = "Контент не найден в локальном каталоге" });
-
-        var item = new UserAction { UserId = UserId, TmdbId = request.TmdbId, IsSeries=request.IsSeries, ActionType = request.ActionType, Value = request.Value, IdempotencyKey = request.IdempotencyKey, SessionId = request.SessionId };
+        var item = new UserAction { UserId = UserId, TmdbId = request.TmdbId, IsSeries=isSeries, ActionType = request.ActionType, Value = request.Value, IdempotencyKey = request.IdempotencyKey!, SessionId = request.SessionId };
         db.UserActions.Add(item);
-        var state=await db.UserMovieStates.FindAsync([UserId,request.TmdbId,request.IsSeries],ct)??new UserMovieState{UserId=UserId,TmdbId=request.TmdbId,IsSeries=request.IsSeries};
-        switch(request.ActionType){case "favorite":state.Favorite=true;break;case "unfavorite":state.Favorite=false;break;case "watched":case "already_watched":state.Watched=true;break;case "unwatched":state.Watched=false;break;case "rate":case "rating":case "rate_inline":state.Rating=request.Value;state.Watched=true;break;case "unrate":state.Rating=null;break;case "skip":case "swipe_left":break;case "swipe_right":break;case "not_interested":case "not_for_me":case "less_like_this":state.SuppressedUntil=DateTime.UtcNow.AddDays(7);break;case "impression":state.LastImpressionAt=DateTime.UtcNow;break;}
-        state.UpdatedAt=DateTime.UtcNow;if(db.Entry(state).State==EntityState.Detached)db.UserMovieStates.Add(state);
-        if (request.ActionType == "impression")
-            db.RecommendationImpressions.Add(new RecommendationImpression { UserId = UserId, TmdbId = request.TmdbId, IsSeries = request.IsSeries, ThemeId = request.ThemeId ?? "unknown", Position = request.Position ?? 0, Reason = "rendered", SessionId = request.SessionId });
-        db.OutboxEvents.Add(new OutboxEvent { Topic = "recommendations.action", Payload = JsonSerializer.Serialize(new { actionId = item.Id, userId = UserId, tmdbId = request.TmdbId, isSeries = request.IsSeries, action = request.ActionType, value = request.Value, sessionId = request.SessionId, createdAt = item.CreatedAt }) });
+        var state=await db.UserMovieStates.FindAsync([UserId,request.TmdbId,isSeries],ct)??new UserMovieState{UserId=UserId,TmdbId=request.TmdbId,IsSeries=isSeries};
+        ApplyActionState(state, request);
+        if (db.Entry(state).State == EntityState.Detached) db.UserMovieStates.Add(state);
+        AddActionSideEffects(request, item);
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException)
         {
@@ -379,31 +469,68 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             if (duplicate is not null) return Ok(new { id = duplicate.Id, duplicate = true });
             throw;
         }
-        if (!string.IsNullOrWhiteSpace(request.SessionId))
-        {
-            var sessionDb = redis.GetDatabase();
-            var sessionKey = $"rec:session:{UserId}:{request.SessionId}";
-            var swipeCount = await sessionDb.HashIncrementAsync(sessionKey, "swipeCount", request.ActionType is "skip" or "swipe_left" or "swipe_right" ? 1 : 0);
-            await sessionDb.HashSetAsync(sessionKey, [new HashEntry("userId", UserId.ToString()), new HashEntry("lastAction", request.ActionType), new HashEntry("lastMovieId", request.TmdbId)]);
-            if (swipeCount > 0 && swipeCount % 15 == 0)
-            {
-                await sessionDb.HashSetAsync(sessionKey, [new HashEntry("refreshRequested", 1), new HashEntry("lastRefreshAt", DateTime.UtcNow.ToString("O"))]);
-            }
-            await sessionDb.KeyExpireAsync(sessionKey, TimeSpan.FromHours(12));
-        }
+        await UpdateRecommendationSession(request);
         return Created("", new { id = item.Id, duplicate = false });
+    }
+
+    private static string? ValidateAction(ActionRequest request)
+    {
+        var allowed = new[] { "impression", "favorite", "unfavorite", "rate", "rating", "unrate", "skip", "swipe_left", "swipe_right", "not_interested", "watched", "unwatched", "more_like_this", "less_like_this", "not_for_me", "already_watched", "rate_inline" };
+        if (request.TmdbId <= 0 || !allowed.Contains(request.ActionType, StringComparer.Ordinal)) return "Некорректный тип действия или идентификатор фильма";
+        if (request.IdempotencyKey is null || request.IdempotencyKey.Length is < 1 or > 100) return "IdempotencyKey должен содержать от 1 до 100 символов";
+        return request.ActionType is "rate" or "rating" or "rate_inline" && (request.Value is null || request.Value < 1 || request.Value > 10) ? "Оценка должна быть от 1 до 10" : null;
+    }
+
+    private static void ApplyActionState(UserMovieState state, ActionRequest request)
+    {
+        switch (request.ActionType)
+        {
+            case "favorite": state.Favorite = true; break;
+            case "unfavorite": state.Favorite = false; break;
+            case "watched": case "already_watched": state.Watched = true; break;
+            case "unwatched": state.Watched = false; break;
+            case "rate": case "rating": case "rate_inline": state.Rating = request.Value; state.Watched = true; break;
+            case "unrate": state.Rating = null; break;
+            case "not_interested": case "not_for_me": case "less_like_this": state.SuppressedUntil = DateTime.UtcNow.AddDays(7); break;
+            case "impression": state.LastImpressionAt = DateTime.UtcNow; break;
+        }
+        state.UpdatedAt = DateTime.UtcNow;
+    }
+
+    private void AddActionSideEffects(ActionRequest request, UserAction item)
+    {
+        var isSeries = request.IsSeries ?? false;
+        if (request.ActionType == "impression") db.RecommendationImpressions.Add(new RecommendationImpression { UserId = UserId, TmdbId = request.TmdbId, IsSeries = isSeries, ThemeId = request.ThemeId ?? "unknown", Position = request.Position ?? 0, Reason = "rendered", SessionId = request.SessionId });
+        if (request.ActionType is "rate" or "rating" or "rate_inline") db.OutboxEvents.Add(new OutboxEvent { Topic = "taste.profile.update", Payload = JsonSerializer.Serialize(new { userId = UserId, tmdbId = request.TmdbId, isSeries, rating = request.Value, createdAt = item.CreatedAt }) });
+    }
+
+    private async Task UpdateRecommendationSession(ActionRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.SessionId)) return;
+        var sessionDb = redis.GetDatabase();
+        var sessionKey = $"rec:session:{UserId}:{request.SessionId}";
+        var swipeCount = await sessionDb.HashIncrementAsync(sessionKey, "swipeCount", request.ActionType is "skip" or "swipe_left" or "swipe_right" ? 1 : 0);
+        await sessionDb.HashSetAsync(sessionKey, [new HashEntry("userId", UserId.ToString()), new HashEntry("lastAction", request.ActionType), new HashEntry("lastMovieId", request.TmdbId)]);
+        if (swipeCount > 0 && swipeCount % 15 == 0) await sessionDb.HashSetAsync(sessionKey, [new HashEntry("refreshRequested", 1), new HashEntry("lastRefreshAt", DateTime.UtcNow.ToString("O"))]);
+        await sessionDb.KeyExpireAsync(sessionKey, TimeSpan.FromHours(12));
     }
     [HttpGet("library")][Authorize]
     public async Task<IActionResult> Library(CancellationToken ct)
     {
-        var states=await db.UserMovieStates.AsNoTracking().Where(x=>x.UserId==UserId).OrderByDescending(x=>x.UpdatedAt).ToListAsync(ct);
-        var ids=states.Select(x=>x.TmdbId).Distinct().ToArray();
-        var movies=await LightweightMovies(db.Movies.AsNoTracking().Where(x=>ids.Contains(x.TmdbId))).ToListAsync(ct);
-        return Ok(new{items=states.Select(x=>new{x.TmdbId,x.IsSeries,x.Rating,x.Favorite,x.Watched,x.SuppressedUntil,x.UpdatedAt,movie=movies.Where(m=>m.TmdbId==x.TmdbId&&m.IsSeries==x.IsSeries).Select(MovieDto.Summary).FirstOrDefault()})});
+        var productStates = await db.UserMovieStates.AsNoTracking().Where(x => x.UserId == UserId).OrderByDescending(x => x.UpdatedAt).Take(500).ToListAsync(ct);
+        var productItems = await Task.WhenAll(productStates.Select(async state => new
+        {
+            state.TmdbId, state.IsSeries, state.Rating, state.Favorite, state.Watched, state.SuppressedUntil, state.UpdatedAt,
+            movie = TmdbCardGateway.Card(await tmdbCards.GetAsync(new ProductDeckItem(state.TmdbId, state.IsSeries), ct), new ProductDeckItem(state.TmdbId, state.IsSeries))
+        }));
+        return Ok(new { items = productItems });
     }
     [HttpGet("reels")][AllowAnonymous]
     public async Task<IActionResult> Reels(CancellationToken ct)
     {
+        return await ProductFilmstrips(ct);
+        #pragma warning disable CS0162
+        #if LEGACY_CATALOG
         var viewerKey = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "guest";
         // v4 invalidates the former cache entries serialized with PascalCase fields.
         var reelsCacheKey = $"reels:v9:{viewerKey}";
@@ -439,17 +566,21 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             if(representative is not null)assigned.Add(new MovieKey(representative.TmdbId,representative.IsSeries));
             return ReelMetadata(reel,genres,representative);
         }).ToArray();
-        var payload = JsonSerializer.Serialize(new { items }, CacheJsonOptions);
+        var payload = JsonSerializer.Serialize(new { items }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         await cache.SetStringAsync(reelsCacheKey, payload, new DistributedCacheEntryOptions
         {
             AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2)
         }, ct);
         return Content(payload, "application/json");
+        #endif
     }
 
     [HttpGet("reels/{slug}/feed")][AllowAnonymous]
     public async Task<IActionResult> ReelFeed(string slug,[FromQuery]string? cursor=null,[FromQuery]string? sessionId=null,[FromQuery]int limit=20,CancellationToken ct=default)
     {
+        return await ProductFilmstripFeed(slug, sessionId, cursor, 0, limit, ct);
+        #pragma warning disable CS0162
+        #if LEGACY_CATALOG
         if(limit is <1 or >50)return ValidationProblem("Limit должен быть от 1 до 50");
         var reel=ReelDefinitions.All.FirstOrDefault(x=>x.Slug.Equals(slug,StringComparison.OrdinalIgnoreCase));if(reel is null)return NotFound();
         var parsed=FeedCursor(cursor);var activeSessionId=parsed.session??sessionId??Guid.NewGuid().ToString("N");var offset=parsed.offset;
@@ -487,6 +618,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         var consumed = Math.Min(limit, Math.Max(0, keys.Count - offset));
         var next=offset+consumed<keys.Count?MakeFeedCursor(activeSessionId,offset+consumed):null;
         return Ok(new{reel=ReelMetadata(reel,genres,representative),feedSessionId=activeSessionId,items,feedItems,nextCursor=next});
+        #endif
     }
     [HttpPost("imports")][Authorize] public async Task<IActionResult> StartImport(ImportRequest request,CancellationToken ct)
     {
@@ -561,14 +693,21 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         if (sessionId is not null)
         {
             try { await http.CreateClient("selenium").DeleteAsync($"/api/v1/kinopoisk/captcha/{Uri.EscapeDataString(sessionId)}", ct); }
-            catch (HttpRequestException) { }
+            catch (HttpRequestException) { await Task.CompletedTask; }
         }
         job.Status = "Cancelled";
         job.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
         return Ok(new { id = job.Id, status = job.Status });
     }
-    [HttpGet("imports/{id:guid}/items")][Authorize] public async Task<IActionResult> ImportItems(Guid id, CancellationToken ct) { var owns=await db.ImportJobs.AsNoTracking().AnyAsync(x=>x.Id==id&&x.UserId==UserId,ct); if(!owns)return NotFound(); var items=await db.ImportItems.AsNoTracking().Where(x=>x.ImportJobId==id).OrderBy(x=>x.Id).Select(x=>new{id=x.Id,externalId=x.ExternalId,title=x.Title,year=x.Year,genres=x.Genres,rating=x.Rating,kind=x.Kind,isSeries=x.IsSeries,kinopoiskUrl=x.KinopoiskUrl,page=x.Page,matchStatus=x.MatchStatus,tmdbId=x.TmdbId,matchError=x.MatchError}).ToListAsync(ct); return Ok(new{items}); }
+    [HttpGet("imports/{id:guid}/items")][Authorize] public async Task<IActionResult> ImportItems(Guid id, CancellationToken ct)
+    {
+        var owns = await db.ImportJobs.AsNoTracking().AnyAsync(x => x.Id == id && x.UserId == UserId, ct);
+        if (!owns) return NotFound();
+        var items = await db.ImportItems.AsNoTracking().Where(x => x.ImportJobId == id).OrderBy(x => x.Id)
+            .Select(x => new { id = x.Id, externalId = x.ExternalId, title = x.Title, year = x.Year, genres = x.Genres, rating = x.Rating, kind = x.Kind, isSeries = x.IsSeries, kinopoiskUrl = x.KinopoiskUrl, page = x.Page, matchStatus = x.MatchStatus, tmdbId = x.TmdbId, matchError = x.MatchError }).ToListAsync(ct);
+        return Ok(new { items });
+    }
     private static string? TrySessionId(string checkpoint)
     {
         try
@@ -577,7 +716,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
             if (doc.RootElement.TryGetProperty("detail", out var detail) && detail.TryGetProperty("session_id", out var nested)) return nested.GetString();
             if (doc.RootElement.TryGetProperty("session_id", out var direct)) return direct.GetString();
         }
-        catch (JsonException) { }
+        catch (JsonException) { return null; }
         return null;
     }
     private static object? TryCaptchaDetail(string checkpoint)
@@ -605,6 +744,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         }
         catch (JsonException) { return null; }
     }
+    #if LEGACY_CATALOG
     private async Task<List<MovieKey>> BuildRecommendationDeck(Guid? userId, ReelDefinition reel, string sessionId, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -725,6 +865,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
     private static List<Movie> RankReelCandidates(IEnumerable<Movie> movies, ReelDefinition reel)
     {
         var themeKeywords = reel.KeywordIds ?? [];
+        var psychologicalGenreIds = new[] { 18, 53, 9648, 27, 80 };
         double Theme(Movie movie) => reel.Strategy switch
         {
             "classic" => (movie.ReleaseDate is not null && string.Compare(movie.ReleaseDate, "2000-01-01") < 0 ? 25 : 0) + movie.VoteAverage * 3,
@@ -740,7 +881,7 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
                 (reel.Genres.Length == 0 || movie.MovieGenres.Any(g => reel.Genres.Contains(g.GenreId))) &&
                 (reel.PrimaryGenreId is null || movie.MovieGenres.Any(g => g.GenreId == reel.PrimaryGenreId)) &&
                 (reel.Strategy is not ("sports" or "psychological") || reel.KeywordIds is not { Length: > 0 } || movie.MovieKeywords.Any(k => reel.KeywordIds.Contains(k.KeywordId))) &&
-                (reel.Strategy is not "psychological" || movie.MovieGenres.Any(g => PsychologicalGenreIds.Contains(g.GenreId))) &&
+                (reel.Strategy is not "psychological" || movie.MovieGenres.Any(g => psychologicalGenreIds.Contains(g.GenreId))) &&
                 (reel.MaxRuntime is null || movie.RuntimeMinutes is not null && movie.RuntimeMinutes <= reel.MaxRuntime) &&
                 (reel.YearBefore is null || movie.ReleaseDate is not null && string.Compare(movie.ReleaseDate, reel.YearBefore + "-12-31") <= 0))
             .OrderByDescending(movie => movie.Popularity * .25 + movie.VoteAverage * 2 + Theme(movie))
@@ -804,8 +945,9 @@ public sealed class ApiController(SwapKinoDbContext db, UserManager<User> users,
         catch (JsonException) { }
         return Array.Empty<string>();
     }
+    #endif
 }
-public sealed record RegisterRequest(string Email,string Password,string? DisplayName,bool PrivacyConsent); public sealed record LoginRequest(string Email,string Password); public sealed record ProfileUpdateRequest(string? DisplayName, string? AvatarUrl); public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword); public sealed record ActionRequest(int TmdbId,string ActionType,double? Value,string? IdempotencyKey,bool IsSeries=false,string? SessionId=null,string? ThemeId=null,int? Position=null); public sealed record ImportRequest(string ProfileUrl);
+public sealed record RegisterRequest(string Email,string Password,string? DisplayName,bool? PrivacyConsent); public sealed record LoginRequest(string Email,string Password); public sealed record ProfileUpdateRequest(string? DisplayName, string? AvatarUrl); public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword); public sealed record ActionRequest([property: JsonRequired] int TmdbId,string ActionType,double? Value,string? IdempotencyKey,bool? IsSeries=null,string? SessionId=null,string? ThemeId=null,int? Position=null); public sealed record ImportRequest(string ProfileUrl);
 public sealed record LibraryQuery(string? Cursor = null, int Limit = 20, int Page = 1, string? Q = null, string? GenreIds = null, double? MinRating = null, int? YearFrom = null, int? YearTo = null, bool? IsSeries = null, string? Sort = "recent");
 public sealed record MovieKey(int TmdbId,bool IsSeries);
 public sealed record CatalogCursor(double Number,int Votes,string? Text,int Id,bool IsSeries);

@@ -21,7 +21,7 @@ export function MovieImagesView({ movieId, isSeries }: { movieId: number; isSeri
   const detailsHref = `/movie/${movieId}${isSeries ? "?series=1" : ""}`;
 
   if (!movie && !error) return <div className="mx-auto max-w-7xl px-4 py-24 text-center text-muted-foreground">Загружаем галерею…</div>;
-  if (!movie) return <div className="mx-auto max-w-2xl px-4 py-24 text-center"><h1 className="text-xl font-semibold">Галерея недоступна</h1><p className="mt-2 text-sm text-muted-foreground">{error}</p><div className="mt-5 flex justify-center gap-3"><button onClick={() => void load()} className="rounded-full bg-white px-4 py-2 text-sm text-black">Повторить</button><button onClick={() => router.back()} className="rounded-full border px-4 py-2 text-sm">Назад</button></div></div>;
+  if (!movie) return <div className="mx-auto max-w-2xl px-4 py-24 text-center"><h1 className="text-xl font-semibold">Галерея недоступна</h1><p className="mt-2 text-sm text-muted-foreground">{error}</p><div className="mt-5 flex justify-center gap-3"><button type="button" onClick={() => void load()} className="rounded-full bg-white px-4 py-2 text-sm text-black">Повторить</button><button type="button" onClick={() => router.back()} className="rounded-full border px-4 py-2 text-sm">Назад</button></div></div>;
 
   return <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-7">
     <Link href={detailsHref} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4"/>К карточке</Link>
@@ -30,4 +30,4 @@ export function MovieImagesView({ movieId, isSeries }: { movieId: number; isSeri
   </div>;
 }
 
-function Tab({ active, count, onClick, children }: { active: boolean; count: number; onClick: () => void; children: React.ReactNode }) { return <button role="tab" aria-selected={active} onClick={onClick} className={cn("rounded-lg px-4 py-2 text-sm font-semibold transition", active ? "bg-white text-black" : "text-muted-foreground hover:text-white")}>{children}<span className="ml-1.5 text-xs opacity-60">{count}</span></button>; }
+function Tab({ active, count, onClick, children }: { active: boolean; count: number; onClick: () => void; children: React.ReactNode }) { return <button type="button" role="tab" aria-selected={active} onClick={onClick} className={cn("rounded-lg px-4 py-2 text-sm font-semibold transition", active ? "bg-white text-black" : "text-muted-foreground hover:text-white")}>{children}<span className="ml-1.5 text-xs opacity-60">{count}</span></button>; }
