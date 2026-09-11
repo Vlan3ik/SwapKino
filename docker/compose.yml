@@ -58,6 +58,7 @@ services:
       TMDB_ALLOW_FALLBACK: "false"
       SEED_TEST_ADMIN: "true"
       VIBIX_TMDB_PATH_TEMPLATE: ${VIBIX_TMDB_PATH_TEMPLATE:-api/v1/publisher/videos/tmdb/{0}}
+    dns: [1.1.1.1, 9.9.9.9]
     expose: ["8000"]
     depends_on: {postgres: {condition: service_healthy}, redis-runtime: {condition: service_started}}
     mem_limit: 512m
@@ -76,6 +77,7 @@ services:
       REDIS_URL: redis-runtime:6379,abortConnect=false
       SELENIUM_URL: http://selenium-service:8081
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-before-production}
+    dns: [1.1.1.1, 9.9.9.9]
     env_file: [../backend/.env]
     depends_on: {postgres: {condition: service_healthy}, api: {condition: service_started}, selenium-service: {condition: service_started}}
     mem_limit: ${WORKER_MEM_LIMIT:-256m}
