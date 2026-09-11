@@ -2,6 +2,8 @@ import type { MetadataRoute } from "next";
 import { absoluteUrl } from "@/lib/site";
 import { seoFetch } from "@/lib/seo";
 
+export const dynamic = "force-dynamic";
+
 type MoviePage = { items?: Array<{ tmdbId?: number; id?: number; isSeries?: boolean }>; results?: Array<{ tmdbId?: number; id?: number; isSeries?: boolean }>; totalPages?: number };
 type Reel = { slug: string; updatedAt?: string };
 type ProfilePage = { items?: Array<{ id: string; lastModified?: string }>; totalPages?: number };
