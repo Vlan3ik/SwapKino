@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      DEPLOY_PATH: /projects/SwapKino
+      DEPLOY_PATH: /home/vlan/SwapKino
       DEPLOY_PORT: "18080"
     steps:
       - name: Configure SSH
