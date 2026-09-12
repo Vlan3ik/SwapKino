@@ -162,6 +162,7 @@ export interface ApiMovie {
   trailerYoutubeId?: string | null;
   watchUrl?: string | null;
   images?: unknown[];
+  posters?: unknown[];
   crew?: unknown[];
   trailers?: unknown[];
   payload?: Record<string, unknown> | null;
@@ -713,6 +714,7 @@ export function mapApiMovie(movie: ApiMovie): Movie {
     directors,
     writers,
     images,
+    posters: mapImages(movie.posters),
     type: movie.isSeries ? "series" : "film",
     detailsState: movie.detailsState ?? null,
   };

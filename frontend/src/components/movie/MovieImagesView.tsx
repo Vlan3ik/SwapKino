@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Images } from "lucide-react";
+import { ArrowLeft, Images, X } from "lucide-react";
 import { api, mapApiMovie } from "@/lib/api";
 import type { Movie } from "@/types";
 import { cn } from "@/lib/utils";
@@ -13,10 +13,11 @@ export function MovieImagesView({ movieId, isSeries }: { movieId: number; isSeri
   const [movie, setMovie] = useState<Movie | null>(null);
   const [tab, setTab] = useState<"stills" | "posters">("stills");
   const [error, setError] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const load = useCallback(async () => { setError(null); try { setMovie(mapApiMovie(await api.movie(movieId, isSeries))); } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось загрузить изображения"); } }, [movieId, isSeries]);
   useEffect(() => { void load(); }, [load]);
   const stills = useMemo(() => movie ? [movie.backdropUrl, ...movie.images].filter((url, index, rows): url is string => Boolean(url) && rows.indexOf(url) === index) : [], [movie]);
-  const posters = useMemo(() => movie?.posterUrl ? [movie.posterUrl] : [], [movie]);
+  const posters = useMemo(() => movie ? [movie.posterUrl, ...movie.posters].filter((url, index, rows): url is string => Boolean(url) && rows.indexOf(url) === index) : [], [movie]);
   const images = tab === "stills" ? stills : posters;
   const detailsHref = `/movie/${movieId}${isSeries ? "?series=1" : ""}`;
 
@@ -26,7 +27,8 @@ export function MovieImagesView({ movieId, isSeries }: { movieId: number; isSeri
   return <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-7">
     <Link href={detailsHref} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4"/>К карточке</Link>
     <div className="mt-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4"><div><p className="text-xs uppercase tracking-widest text-rating">{movie.type === "series" ? "Сериал" : "Фильм"}</p><h1 className="mt-1 text-3xl sm:text-4xl font-bold">{movie.title}: галерея</h1><p className="mt-1 text-sm text-muted-foreground">{stills.length} кадров · {posters.length} постеров</p></div><div className="flex rounded-xl border border-white/10 bg-white/5 p-1" role="tablist" aria-label="Тип изображений"><Tab active={tab === "stills"} count={stills.length} onClick={() => setTab("stills")}>Кадры</Tab><Tab active={tab === "posters"} count={posters.length} onClick={() => setTab("posters")}>Постеры</Tab></div></div>
-    {images.length ? <div role="tabpanel" className={cn("mt-7 grid gap-4", tab === "posters" ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3")}>{images.map((url, index) => <a key={url} href={url} target="_blank" rel="noreferrer" className={cn("group overflow-hidden rounded-2xl border border-white/10 bg-white/5", tab === "posters" ? "aspect-[2/3]" : "aspect-video")}><img src={url} alt={`${tab === "posters" ? "Постер" : "Кадр"} ${index + 1}: ${movie.title}`} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"/></a>)}</div> : <div className="mt-7 rounded-2xl border border-dashed border-white/15 py-24 text-center text-muted-foreground"><Images className="mx-auto h-9 w-9 opacity-40"/><p className="mt-3">{tab === "posters" ? "Дополнительных постеров пока нет" : "Кадров пока нет"}</p></div>}
+    {images.length ? <div role="tabpanel" className={cn("mt-7 grid gap-4", tab === "posters" ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3")}>{images.map((url, index) => <button key={url} type="button" onClick={() => setSelectedImage(url)} aria-label={`Открыть ${tab === "posters" ? "постер" : "кадр"} ${index + 1}`} className={cn("group overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left", tab === "posters" ? "aspect-[2/3]" : "aspect-video")}><img src={url} alt={`${tab === "posters" ? "Постер" : "Кадр"} ${index + 1}: ${movie.title}`} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"/></button>)}</div> : <div className="mt-7 rounded-2xl border border-dashed border-white/15 py-24 text-center text-muted-foreground"><Images className="mx-auto h-9 w-9 opacity-40"/><p className="mt-3">{tab === "posters" ? "Дополнительных постеров пока нет" : "Кадров пока нет"}</p></div>}
+    {selectedImage && <div role="dialog" aria-modal="true" aria-label="Просмотр изображения" className="fixed inset-0 z-50 grid place-items-center bg-black/85 p-4" onClick={() => setSelectedImage(null)}><button type="button" aria-label="Закрыть просмотр" onClick={() => setSelectedImage(null)} className="absolute right-4 top-4 rounded-full bg-black/60 p-3 text-white hover:bg-black"><X className="h-5 w-5" /></button><img src={selectedImage} alt={movie.title} onClick={(event) => event.stopPropagation()} className="max-h-[90vh] max-w-[94vw] rounded-xl object-contain shadow-2xl" /></div>}
   </div>;
 }
 

@@ -30,6 +30,7 @@ export interface Movie {
   directors: Person[];
   writers: Person[];
   images: string[];
+  posters: string[];
   type: "film" | "series";
   detailsState?: string | null;
 }

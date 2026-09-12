@@ -63,13 +63,24 @@ public sealed class TmdbCardGateway(TmdbClient tmdb, IDistributedCache cache)
         var genres = x.TryGetProperty("genres", out var gs) && gs.ValueKind == JsonValueKind.Array
             ? gs.EnumerateArray().Where(g => g.TryGetProperty("id", out _)).Select(g => new { id = g.GetProperty("id").GetInt32(), name = Text(g, "name") ?? "" }).ToArray()
             : Array.Empty<object>();
-        return new { id = item.TmdbId, tmdbId = item.TmdbId, isSeries = item.IsSeries, title, originalTitle = Text(x, item.IsSeries ? "original_name" : "original_title"), overview = Text(x, "overview"), releaseDate = release, runtime = item.IsSeries ? (int?)null : Integer(x, "runtime"), rating = Number(x, "vote_average"), voteCount = Integer(x, "vote_count"), genres, posterUrl = Image(Text(x, "poster_path"), "w500"), backdropUrl = Image(Text(x, "backdrop_path"), "original"), detailsState = "ready" };
+        var gallery = x.TryGetProperty("images", out var imageSet) && imageSet.ValueKind == JsonValueKind.Object
+            ? new
+            {
+                backdrops = ImagePaths(imageSet, "backdrops", "w780"),
+                posters = ImagePaths(imageSet, "posters", "w500")
+            }
+            : new { backdrops = Array.Empty<string>(), posters = Array.Empty<string>() };
+        return new { id = item.TmdbId, tmdbId = item.TmdbId, isSeries = item.IsSeries, title, originalTitle = Text(x, item.IsSeries ? "original_name" : "original_title"), overview = Text(x, "overview"), releaseDate = release, runtime = item.IsSeries ? (int?)null : Integer(x, "runtime"), rating = Number(x, "vote_average"), voteCount = Integer(x, "vote_count"), genres, posterUrl = Image(Text(x, "poster_path"), "w500"), backdropUrl = Image(Text(x, "backdrop_path"), "w780"), images = gallery.backdrops, posters = gallery.posters, detailsState = "ready" };
     }
     public static string? PosterUrl(JsonElement x) => Image(Text(x, "poster_path"), "w500");
     private static string? Text(JsonElement x, string key) => x.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
     private static int? Integer(JsonElement x, string key) => x.TryGetProperty(key, out var v) && v.TryGetInt32(out var n) ? n : null;
     private static double Number(JsonElement x, string key) => x.TryGetProperty(key, out var v) && v.TryGetDouble(out var n) ? n : 0;
     private static string? Image(string? path, string size) => string.IsNullOrWhiteSpace(path) ? null : $"https://image.tmdb.org/t/p/{size}{path}";
+    private static string[] ImagePaths(JsonElement imageSet, string key, string size) =>
+        imageSet.TryGetProperty(key, out var rows) && rows.ValueKind == JsonValueKind.Array
+            ? rows.EnumerateArray().Select(row => Text(row, "file_path")).Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => Image(path, size)!).Distinct().ToArray()
+            : [];
 }
 
 public sealed record TmdbListRequest(bool IsSeries, string? Query, int Page, string? Genres, double? MinRating, int? YearFrom, int? YearTo, string Sort);
